@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# 日本標準時 (JST) の設定
 JST = timezone(timedelta(hours=+9))
 
 # 環境変数（RenderやHerokuの環境設定で入力してください）
