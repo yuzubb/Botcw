@@ -1,1 +1,177 @@
 
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatwork Bot 完全攻略ガイド</title>
+    <style>
+        :root {
+            --bg-main: #36393f;
+            --bg-card: #2f3136;
+            --bg-code: #202225;
+            --text-main: #dcddde;
+            --text-muted: #b9bbbe;
+            --accent: #7289da;
+            --cmd-color: #00aff4;
+            --border: #202225;
+        }
+
+        body {
+            font-family: 'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            border-bottom: 2px solid var(--accent);
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            text-align: center;
+        }
+
+        h1 { color: #fff; margin: 0; font-size: 2em; }
+        h2 { color: #fff; margin-top: 40px; border-left: 4px solid var(--accent); padding-left: 15px; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            transition: transform 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+
+        .cmd-name {
+            font-family: 'Consolas', monospace;
+            color: var(--cmd-color);
+            font-size: 1.3em;
+            font-weight: bold;
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .format {
+            background: var(--bg-code);
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 0.9em;
+            display: block;
+            margin-bottom: 15px;
+            color: #8e9297;
+        }
+
+        .desc { font-size: 0.95em; color: var(--text-main); }
+
+        .tag {
+            display: inline-block;
+            font-size: 0.75em;
+            padding: 2px 8px;
+            border-radius: 12px;
+            background: var(--accent);
+            color: #fff;
+            margin-left: 10px;
+        }
+
+        .footer {
+            margin-top: 60px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85em;
+        }
+
+        hr { border: 0; border-top: 1px solid var(--border); margin: 40px 0; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>🤖 Bot Command & Economy Guide</h1>
+        <p>Chatwork Game Bot v3.0 | 究極のマニュアル</p>
+    </header>
+
+    <h2>💰 基本・経済コマンド</h2>
+    <div class="grid">
+        <div class="card">
+            <span class="cmd-name">/status</span>
+            <span class="format">形式: /status</span>
+            <div class="desc">自分の所持ポイント、現在の職業、販売人権限の状態を表示します。</div>
+        </div>
+        <div class="card">
+            <span class="cmd-name">/omikuji</span><span class="tag">1日1回</span>
+            <span class="format">形式: /omikuji</span>
+            <div class="desc">運勢を占います。大吉が出ればポイント大幅アップ！</div>
+        </div>
+        <div class="card">
+            <span class="cmd-name">/give</span>
+            <span class="format">形式: /give [aid] [pt]</span>
+            <div class="desc">指定したIDのユーザーにポイントを送金します。</div>
+        </div>
+    </div>
+
+    <h2>💼 職業と労働システム</h2>
+    <div class="grid">
+        <div class="card">
+            <span class="cmd-name">/job</span>
+            <span class="format">形式: /job [職業名]</span>
+            <div class="desc">名前なしで一覧を表示、名前ありでその職業に就職します。</div>
+        </div>
+        <div class="card">
+            <span class="cmd-name">/work</span><span class="tag">30分毎 / 1日10回</span>
+            <span class="format">形式: /work</span>
+            <div class="desc">仕事をして給料を得ます。稀に「ボーナス」で報酬が倍増します。</div>
+        </div>
+        <div class="card">
+            <span class="cmd-name">/steal</span><span class="tag">泥棒専用</span>
+            <span class="format">形式: /steal</span>
+            <div class="desc">他のユーザーからランダムにポイントを奪います（1日1回）。</div>
+        </div>
+    </div>
+
+    <h2>🏪 ショップ・販売</h2>
+    <div class="grid">
+        <div class="card">
+            <span class="cmd-name">/shop | /buy</span>
+            <span class="format">形式: /buy [商品ID]</span>
+            <div class="desc">ショップでアイテムを購入します。購入後は専用URLが発行されます。</div>
+        </div>
+        <div class="card">
+            <span class="cmd-name">/unlock</span>
+            <span class="format">形式: /unlock</span>
+            <div class="desc">5000ptを消費して、限定コマンド「/sell」を解放します。</div>
+        </div>
+        <div class="card">
+            <span class="cmd-name">/sell</span><span class="tag">販売人専用</span>
+            <span class="format">形式: /sell [品名] [価格]</span>
+            <div class="desc">商品をルーム内で宣伝します。購入希望者は/giveで送金して貰います。</div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>※チャットで発言するたびに 1pt 獲得できます。</p>
+        <p>© 2026 Chatwork Game Bot Project</p>
+    </div>
+</div>
+
+</body>
+</html>
