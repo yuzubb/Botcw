@@ -1,13 +1,13 @@
 import os
 import random
 import requests
-import re
 from datetime import datetime
 from flask import Flask, request, Response
 from supabase import create_client, Client
 
 app = Flask(__name__)
 
+# 環境変数
 CW_TOKEN = os.environ.get("CW_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -60,7 +60,8 @@ def webhook():
     if user.get("is_blacklisted"): return Response(status=200)
     is_admin = is_room_admin(room_id, acc_id)
 
-    # --- 一般コマンド ---
+    # --- コマンド処理 (実行したら return する) ---
+
     if body == "/omikuji":
         today = datetime.now().date().isoformat()
         if user.get("last_omikuji_at") == today:
@@ -69,33 +70,17 @@ def webhook():
             res = random.choice([{"n":"大吉","p":100},{"n":"吉","p":50},{"n":"凶","p":5}])
             update_user(acc_id, {"points": (user.get("points") or 0) + res["p"], "last_omikuji_at": today})
             send_cw(room_id, acc_id, msg_id, f"結果：{res['n']} ({res['p']}pt獲得)")
-
-    elif body == "/unlock":
-        if user.get("is_seller"):
-            send_cw(room_id, acc_id, msg_id, "既に販売人です。")
-        elif (user.get("points") or 0) >= 5000:
-            update_user(acc_id, {"points": user["points"] - 5000, "is_seller": True})
-            send_cw(room_id, acc_id, msg_id, "🎉 5000ptを支払い、販売人になりました！ /sell が使えます。")
-        else:
-            send_cw(room_id, acc_id, msg_id, "販売人になるには 5000pt 必要です。")
-
-    elif body.startswith("/sell "):
-        if user.get("is_seller"):
-            p = body.split(None, 2)
-            if len(p) >= 3:
-                send_cw(room_id, acc_id, msg_id, f"[info][title]📢 販売人出品[/title]商品: {p[1]}\n価格: {p[2]}pt\n[hr]欲しい人は [code]/give {acc_id} {p[2]}[/code] で送金してね！[/info]")
-        else:
-            send_cw(room_id, acc_id, msg_id, "販売人権限がありません。/unlock で解放してください。")
-
-
+        return Response(status=200)
 
     elif body == "/status":
         send_cw(room_id, acc_id, msg_id, f"所持: {user.get('points')}pt\n職業: {user.get('job')}\n販売人: {user.get('is_seller')}")
+        return Response(status=200)
 
     elif body == "/shop":
         items = supabase.table("items").select("*").execute().data
         msg = "[info][title]🏪 ショップ[/title]" + "".join([f"ID:{i['id']} {i['name']}({i['price']}pt)\n" for i in items]) + "購入: /buy ID[/info]"
         send_cw(room_id, acc_id, msg_id, msg)
+        return Response(status=200)
 
     elif body.startswith("/buy "):
         item_id = body.split(" ")[1]
@@ -104,11 +89,13 @@ def webhook():
             update_user(acc_id, {"points": user['points'] - item[0]['price']})
             send_cw(room_id, acc_id, msg_id, f"購入完了: {item[0]['url']}")
         else: send_cw(room_id, acc_id, msg_id, "pt不足または商品なし")
+        return Response(status=200)
 
     elif body == "/job":
         jobs = supabase.table("jobs").select("*").execute().data
         msg = "[info][title]💼 職業一覧[/title]" + "".join([f"・{j['name']} (費用:{j['price']}pt)\n" for j in jobs]) + "就職: /job 職業名[/info]"
         send_cw(room_id, acc_id, msg_id, msg)
+        return Response(status=200)
 
     elif body.startswith("/job "):
         name = body.replace("/job ", "").strip()
@@ -116,7 +103,8 @@ def webhook():
         if job and user['points'] >= job[0]['price']:
             update_user(acc_id, {"points": user['points'] - job[0]['price'], "job": name})
             send_cw(room_id, acc_id, msg_id, f"{name}に就職しました！")
-        else: send_cw(room_id, acc_id, msg_id, "条件未達")
+        else: send_cw(room_id, acc_id, msg_id, "条件未達(pt不足など)")
+        return Response(status=200)
 
     elif body == "/work":
         job = supabase.table("jobs").select("*").eq("name", user.get("job")).execute().data
@@ -133,6 +121,7 @@ def webhook():
                 if random.random() < 0.05: reward *= 2 # ボーナス
                 update_user(acc_id, {"points": user['points'] + reward, "last_work_at": now.isoformat(), "last_work_day": today, "work_count": count + 1})
                 send_cw(room_id, acc_id, msg_id, f"{reward}pt 獲得！")
+        return Response(status=200)
 
     elif body == "/steal":
         if user.get("job") != "泥棒": send_cw(room_id, acc_id, msg_id, "泥棒専用です。")
@@ -147,27 +136,46 @@ def webhook():
                     update_user(acc_id, {"points": user['points'] + amt, "last_steal_at": today})
                     update_user(t['id'], {"points": t['points'] - amt})
                     send_cw(room_id, acc_id, msg_id, f"[pname:{t['id']}]から{amt}pt奪いました")
+        return Response(status=200)
+
+    elif body == "/unlock":
+        if user.get("is_seller"): send_cw(room_id, acc_id, msg_id, "既に販売人です。")
+        elif (user.get("points") or 0) >= 5000:
+            update_user(acc_id, {"points": user["points"] - 5000, "is_seller": True})
+            send_cw(room_id, acc_id, msg_id, "販売人になりました！")
+        else: send_cw(room_id, acc_id, msg_id, "5000pt必要です。")
+        return Response(status=200)
+
+    elif body.startswith("/sell "):
+        if user.get("is_seller"):
+            p = body.split(None, 2)
+            if len(p) >= 3: send_cw(room_id, acc_id, msg_id, f"[info][title]📢 出品[/title]品: {p[1]}\n価: {p[2]}pt\n購入は [code]/give {acc_id} {p[2]}[/code][/info]")
+        else: send_cw(room_id, acc_id, msg_id, "/unlock が必要です。")
+        return Response(status=200)
 
     # --- 管理者コマンド ---
     if is_admin:
         if body.startswith("/add_job "):
-            # /add_job 名前,費用,最小報酬,最大報酬
             d = body.replace("/add_job ", "").split(",")
             supabase.table("jobs").upsert({"name":d[0],"price":int(d[1]),"min_pt":int(d[2]),"max_pt":int(d[3])}).execute()
             send_cw(room_id, acc_id, msg_id, "仕事追加完了")
+            return Response(status=200)
         elif body.startswith("/del_job "):
             supabase.table("jobs").delete().eq("name", body.replace("/del_job ", "").strip()).execute()
             send_cw(room_id, acc_id, msg_id, "仕事削除完了")
+            return Response(status=200)
         elif body.startswith("/add_item "):
-            # /add_item ID,名前,価格,説明,URL
             d = body.replace("/add_item ", "").split(",")
             supabase.table("items").upsert({"id":d[0],"name":d[1],"price":int(d[2]),"description":d[3],"url":d[4]}).execute()
-            send_cw(room_id, acc_id, msg_id, "アイテム追加完了")
+            send_cw(room_id, acc_id, msg_id, "商品追加完了")
+            return Response(status=200)
         elif body.startswith("/del_item "):
             supabase.table("items").delete().eq("id", body.replace("/del_item ", "").strip()).execute()
-            send_cw(room_id, acc_id, msg_id, "アイテム削除完了")
+            send_cw(room_id, acc_id, msg_id, "商品削除完了")
+            return Response(status=200)
 
-    update_user(acc_id, {"points": (user.get("points") or 0) + 1}) # チャット加算
+    # --- 通常発言 (コマンド以外の時だけ +1pt) ---
+    update_user(acc_id, {"points": (user.get("points") or 0) + 1})
     return Response(status=200)
 
 if __name__ == "__main__":
