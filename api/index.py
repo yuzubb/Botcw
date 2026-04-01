@@ -186,6 +186,36 @@ def webhook():
                 else: send_cw(room_id, acc_id, msg_id, "送金失敗(pt不足等)")
         return Response(status=200)
 
+    elif body.startswith("/hack "):
+    if user.get("job") != "ハッカー":
+        send_cw(room_id, acc_id, msg_id, "ハッカー専用コマンドです。")
+    else:
+        parts = body.split(" ")
+        if len(parts) < 2:
+            send_cw(room_id, acc_id, msg_id, "使い方: /hack アカウントID")
+        else:
+            target_id = parts[1]
+            if target_id == acc_id:
+                send_cw(room_id, acc_id, msg_id, "自分はハックできません。")
+            else:
+                today = datetime.now().date().isoformat()
+                if user.get("last_hack_at") == today:
+                    send_cw(room_id, acc_id, msg_id, "ハックは1日1回までです。")
+                else:
+                    target_user = get_user(target_id)
+                    update_user(acc_id, {"last_hack_at": today})
+                    SUCCESS_RATE = 0.4
+                    if random.random() >= SUCCESS_RATE:
+                        send_cw(room_id, acc_id, msg_id, "💻 ハック失敗…セキュリティが固かった！（成功率40%）")
+                    else:
+                        steal_amt = 100
+                        reward = random.randint(50, 100)
+                        new_target_pts = max(0, (target_user.get("points") or 0) - steal_amt)
+                        update_user(target_id, {"points": new_target_pts})
+                        update_user(acc_id, {"points": (user.get("points") or 0) + reward})
+                        send_cw(room_id, acc_id, msg_id,
+                            f"✅ ハック成功！[pname:{target_id}]から100ptを抜き取り、{reward}ptを獲得しました💰")
+                        
     elif body == "/steal":
         if user.get("job") != "泥棒":
             send_cw(room_id, acc_id, msg_id, "泥棒専用です。")
