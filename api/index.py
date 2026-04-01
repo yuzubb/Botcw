@@ -1,44 +1,31 @@
 import os
-import time
+import random
 import requests
 import re
+from datetime import datetime
 from flask import Flask, request, Response
 from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# --- 環境変数から設定を読み込む ---
 CW_TOKEN = os.environ.get("CW_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-# Supabaseクライアントの初期化
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 起動時に一度だけBot自身のIDを取得
 def get_bot_id():
-    headers = {"X-ChatWorkToken": CW_TOKEN}
     try:
+        headers = {"X-ChatWorkToken": CW_TOKEN}
         res = requests.get("https://api.chatwork.com/v2/me", headers=headers).json()
         return str(res.get("account_id", ""))
-    except Exception as e:
-        print(f"Error fetching BOT_ID: {e}")
-        return ""
+    except: return ""
 
 BOT_ID = get_bot_id()
 
-# --- データベース操作関数 ---
 def get_user(acc_id):
-    # Supabaseからユーザー取得、いなければ作成
     res = supabase.table("profiles").select("*").eq("id", acc_id).execute()
     if not res.data:
-        new_user = {
-            "id": acc_id, 
-            "points": 0, 
-            "is_seller": False, 
-            "admin_bonus_given": False, 
-            "is_blacklisted": False
-        }
+        new_user = {"id": acc_id, "points": 0, "is_seller": False, "job": "なし", "is_blacklisted": False}
         supabase.table("profiles").insert(new_user).execute()
         return new_user
     return res.data[0]
@@ -55,108 +42,114 @@ def is_room_admin(room_id, account_id):
     headers = {"X-ChatWorkToken": CW_TOKEN}
     try:
         members = requests.get(f"https://api.chatwork.com/v2/rooms/{room_id}/members", headers=headers).json()
-        for m in members:
-            if str(m.get("account_id")) == str(account_id):
-                return m.get("role") == "admin"
+        return any(str(m.get("account_id")) == str(account_id) and m.get("role") == "admin" for m in members)
     except: return False
-    return False
 
 @app.route("/", methods=["GET"])
-def index():
-    return "Bot is running with Environment Variables!"
+def index(): return "Bot Active"
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
     if not data: return Response(status=200)
-    
     event = data.get("webhook_event", {})
-    acc_id = str(event.get("account_id", ""))
+    acc_id, room_id, msg_id, body = str(event.get("account_id", "")), event.get("room_id"), event.get("message_id"), event.get("body", "").strip()
     
-    # Bot自身の発言は無視
-    if not acc_id or acc_id == BOT_ID: 
-        return Response(status=200)
-
-    room_id = event.get("room_id")
-    msg_id = event.get("message_id")
-    body = event.get("body", "").strip()
-
-    # ユーザーデータ取得
+    if not acc_id or acc_id == BOT_ID: return Response(status=200)
     user = get_user(acc_id)
     if user.get("is_blacklisted"): return Response(status=200)
-    
-    admin_auth = is_room_admin(room_id, acc_id)
+    is_admin = is_room_admin(room_id, acc_id)
 
-    # --- 管理者ボーナス判定 ---
-    if admin_auth and not user.get("admin_bonus_given"):
-        new_points = (user.get("points") or 0) + 100000
-        update_user(acc_id, {"points": new_points, "admin_bonus_given": True})
-        send_cw(room_id, acc_id, msg_id, "✨管理者ボーナス 100,000pt 付与完了！")
-        user["points"] = new_points
-
-    # --- コマンド処理 ---
-    if body == "/shop":
-        res = supabase.table("items").select("*").execute()
-        items = res.data
-        if not items:
-            send_cw(room_id, acc_id, msg_id, "現在ショップに商品はありません。")
+    # --- 一般コマンド ---
+    if body == "/omikuji":
+        today = datetime.now().date().isoformat()
+        if user.get("last_omikuji_at") == today:
+            send_cw(room_id, acc_id, msg_id, "おみくじは1日1回です。")
         else:
-            msg = "[info][title]🏪 ショップ[/title]"
-            for i in items:
-                msg += f"ID: {i['id']} | {i['name']} ({i['price']}pt)\n┗ {i['description']}\n"
-            msg += "------------------\n購入: [code]/buy ID[/code][/info]"
-            send_cw(room_id, acc_id, msg_id, msg)
-
-    elif body.startswith("/buy "):
-        item_id = body.replace("/buy ", "").strip()
-        res = supabase.table("items").select("*").eq("id", item_id).execute()
-        if res.data:
-            item = res.data[0]
-            current_points = user.get("points") or 0
-            if current_points >= item["price"]:
-                update_user(acc_id, {"points": current_points - item["price"]})
-                send_cw(room_id, acc_id, msg_id, f"購入完了！\n[hr]{item['name']}\nURL: {item['url']}")
-            else:
-                send_cw(room_id, acc_id, msg_id, "ptが足りません。")
-        else:
-            send_cw(room_id, acc_id, msg_id, "指定されたIDの商品が見つかりません。")
+            res = random.choice([{"n":"大吉","p":100},{"n":"吉","p":50},{"n":"凶","p":5}])
+            update_user(acc_id, {"points": (user.get("points") or 0) + res["p"], "last_omikuji_at": today})
+            send_cw(room_id, acc_id, msg_id, f"結果：{res['n']} ({res['p']}pt獲得)")
 
     elif body == "/status":
-        role = "✅販売人" if user.get("is_seller") else "❌一般"
-        send_cw(room_id, acc_id, msg_id, f"所持: {user.get('points') or 0} pt\n権限: {role}")
+        send_cw(room_id, acc_id, msg_id, f"所持: {user.get('points')}pt\n職業: {user.get('job')}\n販売人: {user.get('is_seller')}")
 
-    elif body.startswith("/give"):
-        parts = re.findall(r'\d+', body)
-        if len(parts) >= 2:
-            target_id, amount = parts[0], int(parts[1])
-            current_points = user.get("points") or 0
-            if amount > 0 and current_points >= amount and target_id != acc_id:
-                target_user = get_user(target_id)
-                update_user(acc_id, {"points": current_points - amount})
-                update_user(target_id, {"points": (target_user.get("points") or 0) + amount})
-                send_cw(room_id, acc_id, msg_id, f"[pname:{target_id}]さんに {amount}pt 送金しました！")
+    elif body == "/shop":
+        items = supabase.table("items").select("*").execute().data
+        msg = "[info][title]🏪 ショップ[/title]" + "".join([f"ID:{i['id']} {i['name']}({i['price']}pt)\n" for i in items]) + "購入: /buy ID[/info]"
+        send_cw(room_id, acc_id, msg_id, msg)
 
-    elif body == "/unlock":
-        current_points = user.get("points") or 0
-        if not user.get("is_seller") and current_points >= 5000:
-            update_user(acc_id, {"points": current_points - 5000, "is_seller": True})
-            send_cw(room_id, acc_id, msg_id, "🎉販売人権限を解放しました！")
+    elif body.startswith("/buy "):
+        item_id = body.split(" ")[1]
+        item = supabase.table("items").select("*").eq("id", item_id).execute().data
+        if item and user['points'] >= item[0]['price']:
+            update_user(acc_id, {"points": user['points'] - item[0]['price']})
+            send_cw(room_id, acc_id, msg_id, f"購入完了: {item[0]['url']}")
+        else: send_cw(room_id, acc_id, msg_id, "pt不足または商品なし")
 
-    elif admin_auth and body.startswith("/additem "):
-        # 形式: /additem ID,名前,価格,説明,URL
-        raw = body.replace("/additem ", "").strip().split(",")
-        if len(raw) >= 5:
-            item_data = {
-                "id": raw[0], 
-                "name": raw[1], 
-                "price": int(raw[2]), 
-                "description": raw[3], 
-                "url": raw[4]
-            }
-            supabase.table("items").upsert(item_data).execute()
-            send_cw(room_id, acc_id, msg_id, f"✅ 商品「{raw[1]}」を登録しました。")
+    elif body == "/job":
+        jobs = supabase.table("jobs").select("*").execute().data
+        msg = "[info][title]💼 職業一覧[/title]" + "".join([f"・{j['name']} (費用:{j['price']}pt)\n" for j in jobs]) + "就職: /job 職業名[/info]"
+        send_cw(room_id, acc_id, msg_id, msg)
 
-    # --- 1pt加算 (通常発言) ---
-    update_user(acc_id, {"points": (user.get("points") or 0) + 1})
-    
+    elif body.startswith("/job "):
+        name = body.replace("/job ", "").strip()
+        job = supabase.table("jobs").select("*").eq("name", name).execute().data
+        if job and user['points'] >= job[0]['price']:
+            update_user(acc_id, {"points": user['points'] - job[0]['price'], "job": name})
+            send_cw(room_id, acc_id, msg_id, f"{name}に就職しました！")
+        else: send_cw(room_id, acc_id, msg_id, "条件未達")
+
+    elif body == "/work":
+        job = supabase.table("jobs").select("*").eq("name", user.get("job")).execute().data
+        if not job: send_cw(room_id, acc_id, msg_id, "/job で就職してください。")
+        else:
+            now = datetime.now()
+            today = now.date().isoformat()
+            last_work = datetime.fromisoformat(user['last_work_at']) if user.get('last_work_at') else None
+            count = user['work_count'] if user.get('last_work_day') == today else 0
+            if last_work and (now - last_work).total_seconds() < 1800: send_cw(room_id, acc_id, msg_id, "休憩中(30分間)")
+            elif count >= 10: send_cw(room_id, acc_id, msg_id, "1日10回まで")
+            else:
+                reward = random.randint(job[0]['min_pt'], job[0]['max_pt'])
+                if random.random() < 0.05: reward *= 2 # ボーナス
+                update_user(acc_id, {"points": user['points'] + reward, "last_work_at": now.isoformat(), "last_work_day": today, "work_count": count + 1})
+                send_cw(room_id, acc_id, msg_id, f"{reward}pt 獲得！")
+
+    elif body == "/steal":
+        if user.get("job") != "泥棒": send_cw(room_id, acc_id, msg_id, "泥棒専用です。")
+        else:
+            today = datetime.now().date().isoformat()
+            if user.get("last_steal_at") == today: send_cw(room_id, acc_id, msg_id, "1日1回まで")
+            else:
+                targets = supabase.table("profiles").select("*").neq("id", acc_id).gt("points", 0).execute().data
+                if targets:
+                    t = random.choice(targets)
+                    amt = random.randint(1, 50)
+                    update_user(acc_id, {"points": user['points'] + amt, "last_steal_at": today})
+                    update_user(t['id'], {"points": t['points'] - amt})
+                    send_cw(room_id, acc_id, msg_id, f"[pname:{t['id']}]から{amt}pt奪いました")
+
+    # --- 管理者コマンド ---
+    if is_admin:
+        if body.startswith("/add_job "):
+            # /add_job 名前,費用,最小報酬,最大報酬
+            d = body.replace("/add_job ", "").split(",")
+            supabase.table("jobs").upsert({"name":d[0],"price":int(d[1]),"min_pt":int(d[2]),"max_pt":int(d[3])}).execute()
+            send_cw(room_id, acc_id, msg_id, "仕事追加完了")
+        elif body.startswith("/del_job "):
+            supabase.table("jobs").delete().eq("name", body.replace("/del_job ", "").strip()).execute()
+            send_cw(room_id, acc_id, msg_id, "仕事削除完了")
+        elif body.startswith("/add_item "):
+            # /add_item ID,名前,価格,説明,URL
+            d = body.replace("/add_item ", "").split(",")
+            supabase.table("items").upsert({"id":d[0],"name":d[1],"price":int(d[2]),"description":d[3],"url":d[4]}).execute()
+            send_cw(room_id, acc_id, msg_id, "アイテム追加完了")
+        elif body.startswith("/del_item "):
+            supabase.table("items").delete().eq("id", body.replace("/del_item ", "").strip()).execute()
+            send_cw(room_id, acc_id, msg_id, "アイテム削除完了")
+
+    update_user(acc_id, {"points": (user.get("points") or 0) + 1}) # チャット加算
     return Response(status=200)
+
+if __name__ == "__main__":
+    app.run(port=5000)
