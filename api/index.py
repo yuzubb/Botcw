@@ -70,6 +70,25 @@ def webhook():
             update_user(acc_id, {"points": (user.get("points") or 0) + res["p"], "last_omikuji_at": today})
             send_cw(room_id, acc_id, msg_id, f"結果：{res['n']} ({res['p']}pt獲得)")
 
+    elif body == "/unlock":
+        if user.get("is_seller"):
+            send_cw(room_id, acc_id, msg_id, "既に販売人です。")
+        elif (user.get("points") or 0) >= 5000:
+            update_user(acc_id, {"points": user["points"] - 5000, "is_seller": True})
+            send_cw(room_id, acc_id, msg_id, "🎉 5000ptを支払い、販売人になりました！ /sell が使えます。")
+        else:
+            send_cw(room_id, acc_id, msg_id, "販売人になるには 5000pt 必要です。")
+
+    elif body.startswith("/sell "):
+        if user.get("is_seller"):
+            p = body.split(None, 2)
+            if len(p) >= 3:
+                send_cw(room_id, acc_id, msg_id, f"[info][title]📢 販売人出品[/title]商品: {p[1]}\n価格: {p[2]}pt\n[hr]欲しい人は [code]/give {acc_id} {p[2]}[/code] で送金してね！[/info]")
+        else:
+            send_cw(room_id, acc_id, msg_id, "販売人権限がありません。/unlock で解放してください。")
+
+
+
     elif body == "/status":
         send_cw(room_id, acc_id, msg_id, f"所持: {user.get('points')}pt\n職業: {user.get('job')}\n販売人: {user.get('is_seller')}")
 
