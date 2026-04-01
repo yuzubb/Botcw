@@ -192,22 +192,37 @@ def webhook():
         else:
             today = datetime.now().date().isoformat()
             if user.get("last_steal_at") == today:
-                send_cw(room_id, acc_id, msg_id, "1日1回まで")
+                send_cw(room_id, acc_id, msg_id, "1日1回までです。欲張りはいけません。")
             else:
-                update_user(acc_id, {"last_steal_at": today})
-                SUCCESS_RATE = 0.3
-                if random.random() >= SUCCESS_RATE:
-                    send_cw(room_id, acc_id, msg_id, "💨 盗みに失敗…逃げ切った！（成功率30%）")
+                # ターゲットの抽出（自分以外、かつポイントを持っている人）
+                targets = supabase.table("profiles").select("*").neq("id", acc_id).gt("points", 0).execute().data
+                
+                if targets:
+                    # ターゲットをランダムに決定
+                    t = random.choice(targets)
+                    
+                    # --- 強化ポイント ---
+                    # 奪う額を 500pt 〜 1000pt に設定（相手の所持金がそれ以下の場合は全額）
+                    steal_min = 500
+                    steal_max = 1000
+                    max_possible = min(t['points'], random.randint(steal_min, steal_max))
+                    
+                    # 更新処理
+                    update_user(acc_id, {
+                        "points": (user.get('points') or 0) + max_possible,
+                        "last_steal_at": today
+                    })
+                    update_user(t['id'], {
+                        "points": t['points'] - max_possible
+                    })
+                    
+                    send_cw(room_id, acc_id, msg_id, 
+                        f"💰 【強奪成功】\n"
+                        f"[pname:{t['id']}]さんから {max_possible}pt 奪い取りました！\n"
+                        f"プロの業だね。"
+                    )
                 else:
-                    targets = supabase.table("profiles").select("*").neq("id", acc_id).gt("points", 0).execute().data
-                    if targets:
-                        t = random.choice(targets)
-                        amt = random.randint(1, 50)
-                        update_user(acc_id, {"points": (user.get('points') or 0) + amt})
-                        update_user(t['id'], {"points": max(0, t['points'] - amt)})
-                        send_cw(room_id, acc_id, msg_id, f"✅ 成功！[pname:{t['id']}]から{amt}pt奪いました")
-                    else:
-                        send_cw(room_id, acc_id, msg_id, "狙える相手がいません。")
+                    send_cw(room_id, acc_id, msg_id, "ターゲット（ポイント持ち）が見当たりません。")
         return Response(status=200)
 
     elif body == "/unlock":
