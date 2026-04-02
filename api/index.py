@@ -54,6 +54,37 @@ def is_room_admin(room_id, account_id):
         return any(str(m.get("account_id")) == str(account_id) and m.get("role") == "admin" for m in members)
     except: return False
 
+def create_trade_room(item_name, item_url, buyer_id):
+    """
+    取引ルームを作成し、招待リンクを返す関数
+    """
+    headers = {"X-ChatWorkToken": CW_TOKEN}
+    
+    # ルーム作成のパラメーター
+    # members_admin_ids にボットのIDを指定するのが必須
+    room_data = {
+        "name": f"【取引】{item_name}",
+        "description": f"商品: {item_name}\nURL: {item_url}\n購入者ID: {buyer_id}",
+        "link": 1,
+        "link_need_acceptance": 0,
+        "members_admin_ids": BOT_ID  # ← これが足りなかった必須項目
+    }
+    
+    try:
+        # 1. ルーム作成
+        r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_data).json()
+        new_rid = r_res.get("room_id")
+        
+        if not new_rid:
+            return None, r_res.get("errors")
+            
+        # 2. 招待リンクを取得
+        l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
+        return l_res.get("public_url"), None
+    except Exception as e:
+        return None, [str(e)]
+
+
 @app.route("/", methods=["GET"])
 def index(): return "Bot Active"
 
@@ -123,31 +154,19 @@ def webhook():
             if item_res.data:
                 target = item_res.data[0]
                 if (user.get("points") or 0) >= target["price"]:
-                    # ポイント減算
-                    new_points = user["points"] - target["price"]
-                    update_user(acc_id, {"points": new_points})
+                    # 1. ポイントを引く
+                    update_user(acc_id, {"points": user["points"] - target["price"]})
                     
-                    # 取引ルーム作成
-                    headers = {"X-ChatWorkToken": CW_TOKEN}
-                    room_data = {
-                        "name": f"【取引】{target['name']}",
-                        "description": f"商品: {target['name']}\nURL: {target.get('url', 'なし')}\n購入者ID: {acc_id}",
-                        "link": 1,
-                        "link_need_acceptance": 0 # 1にすると承認制、0にすると即参加
-                    }
-                    r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_data).json()
-                    new_rid = r_res.get("room_id")
+                    # 2. 関数を使ってルーム作成
+                    link_url, errors = create_trade_room(target['name'], target.get('url', 'なし'), acc_id)
                     
-                    if new_rid:
-                        # 招待リンク取得
-                        l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
-                        link_url = l_res.get("public_url", "リンク取得失敗")
+                    if link_url:
                         send_cw(room_id, acc_id, msg_id, f"購入完了！\n専用ルームはこちら:\n{link_url}")
                     else:
-                        send_cw(room_id, acc_id, msg_id, f"購入はできましたが、ルーム作成に失敗しました。管理者に連絡してください。\n(エラー: {r_res.get('errors')})")
+                        send_cw(room_id, acc_id, msg_id, f"購入はできましたが、ルーム作成に失敗しました。\nエラー: {errors}")
                 else:
-                    send_cw(room_id, acc_id, msg_id, f"ポイントが足りません。(所持: {user['points']}pt / 必要: {target['price']}pt)")
-
+                    send_cw(room_id, acc_id, msg_id, "ポイントが足りません。")
+        return Response(status=200)
     
     # 3-2. 商品追加（販売人専用）
     elif body.startswith("/add_item "):
