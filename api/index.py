@@ -187,8 +187,8 @@ def webhook():
         return Response(status=200)
 
     elif body.startswith("/hack "):
-    if user.get("job") != "ハッカー":
-        send_cw(room_id, acc_id, msg_id, "ハッカー専用コマンドです。")
+        if user.get("job") != "ハッカー":
+            send_cw(room_id, acc_id, msg_id, "ハッカー専用コマンドです。")
     else:
         parts = body.split(" ")
         if len(parts) < 2:
