@@ -218,7 +218,7 @@ def webhook():
                     target_user = get_user(target_id)
                     update_user(acc_id, {"last_hack_at": today})
                     if random.random() < 0.4:
-                        reward = random.randint(50, 100)
+                        reward = random.randint(50, 1000)
                         update_user(target_id, {"points": max(0, (target_user.get("points") or 0) - 100)})
                         update_user(acc_id, {"points": (user.get("points") or 0) + reward})
                         send_cw(room_id, acc_id, msg_id, f"成功！{reward}pt獲得")
