@@ -114,17 +114,74 @@ def webhook():
         send_cw(room_id, acc_id, msg_id, msg)
         return Response(status=200)
 
+
     elif body.startswith("/buy "):
-        p = body.split(" ")
+        p = body.split()
         if len(p) >= 2:
             item_id = p[1]
-            item = supabase.table("items").select("*").eq("id", item_id).execute().data
-            if item and (user.get('points') or 0) >= item[0]['price']:
-                update_user(acc_id, {"points": user['points'] - item[0]['price']})
-                send_cw(room_id, acc_id, msg_id, f"購入完了: {item[0]['url']}")
-            else: send_cw(room_id, acc_id, msg_id, "pt不足または商品なし")
+            item_data = supabase.table("items").select("*").eq("id", item_id).execute().data
+            
+            if item_data and (user.get('points') or 0) >= item_data[0]['price']:
+                target = item_data[0]
+                # ポイント減算
+                new_pt = user['points'] - target['price']
+                update_user(acc_id, {"points": new_pt})
+                
+                # Chatwork APIでルーム作成
+                headers = {"X-ChatWorkToken": CW_TOKEN}
+                room_payload = {
+                    "name": f"【取引】{target['name']}",
+                    "description": f"購入者: [pname:{acc_id}]\n商品: {target['name']}\nURL: {target['url']}",
+                    "link": 1,               # 招待リンク有効化
+                    "link_need_acceptance": 1 # 参加には承認が必要（手動承認用）
+                }
+                
+                try:
+                    r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_payload).json()
+                    new_rid = r_res.get("room_id")
+                    
+                    # 招待URLの取得
+                    l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
+                    invite_url = l_res.get("public_url")
+                    
+                    msg = (
+                        f"購入完了！残り: {new_pt}pt\n"
+                        f"以下の専用ルームへ参加申請してください。販売人が承認します。\n"
+                        f"{invite_url}\n"
+                        f"※このルームは閲覧専用（投稿・タスク不可）となります。"
+                    )
+                    send_cw(room_id, acc_id, msg_id, msg)
+                except:
+                    send_cw(room_id, acc_id, msg_id, "購入は完了しましたが、ルーム作成に失敗しました。管理者に連絡してください。")
+            else:
+                send_cw(room_id, acc_id, msg_id, "pt不足または商品が存在しません。")
         return Response(status=200)
-
+        
+    # 使い方: /add_item [商品名] [価格] [URL]
+        elif body.startswith("/add_item "):
+            if not user.get("is_seller"):
+                send_cw(room_id, acc_id, msg_id, "エラー: 販売人権限がありません。")
+            else:
+                parts = body.split()
+                if len(parts) >= 4:
+                    try:
+                        item_name = parts[1]
+                        price = int(parts[2])
+                        item_url = " ".join(parts[3:]) # URLにスペースが含まれる場合を考慮
+                    
+                    supabase.table("items").insert({
+                        "name": item_name,
+                        "price": price,
+                        "url": item_url,
+                        "seller_id": acc_id
+                    }).execute()
+                    send_cw(room_id, acc_id, msg_id, f"成功: 「{item_name}」を{price}ptで登録しました。")
+                except ValueError:
+                    send_cw(room_id, acc_id, msg_id, "エラー: 価格は数値で入力してください。")
+            else:
+                send_cw(room_id, acc_id, msg_id, "使用法: /add_item [商品名] [価格] [URL]")
+        return Response(status=200)
+    
     # 4. 職業・仕事
     elif body == "/job":
         jobs = supabase.table("jobs").select("*").execute().data
