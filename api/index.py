@@ -20,7 +20,7 @@ def get_bot_id():
         return str(res.get("account_id", ""))
     except: return ""
 
-BOT_ID = get_bot_id()
+BOT_ID = "9692981"
 
 def get_user(acc_id):
     res = supabase.table("profiles").select("*").eq("id", acc_id).execute()
