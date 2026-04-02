@@ -171,6 +171,26 @@ def webhook():
                     send_cw(room_id, acc_id, msg_id, f"{reward}pt 獲得！")
         return Response(status=200)
 
+    # 6. 管理者コマンド (is_admin のブロック内に追加)
+    elif is_admin:
+        if body == "/daily_reset":
+            try:
+                # 全ユーザー(全行)の制限カラムをリセット
+                # .neq("id", "0") は「全行」を対象にするためのテクニックです
+                supabase.table("profiles").update({
+                    "work_count": 0,
+                    "last_work_day": None,
+                    "last_omikuji_at": None,
+                    "last_hack_at": None,
+                    "last_steal_at": None
+                }).neq("id", "0").execute()
+                
+                send_cw(room_id, acc_id, msg_id, "【システム】全ユーザーのデイリー制限をリセットしました。")
+            except Exception as e:
+                send_cw(room_id, acc_id, msg_id, f"リセット失敗: {str(e)}")
+            return Response(status=200)
+
+        
     # 5. 特殊アクション
     elif body.startswith("/give "):
         parts = body.split(" ")
