@@ -163,7 +163,7 @@ def webhook():
                     supabase.table("items").insert({
                         "name": item_name,
                         "price": price,
-                        "url": item_url,
+                        "url": item_url,  
                         "seller_id": acc_id
                     }).execute()
                     send_cw(room_id, acc_id, msg_id, f"成功: 「{item_name}」を登録しました。")
