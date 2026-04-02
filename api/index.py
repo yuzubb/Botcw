@@ -7,20 +7,24 @@ from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# --- 環境変数 ---
 CW_TOKEN = os.environ.get("CW_TOKEN")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+_CACHED_BOT_ID = None
+
 def get_bot_id():
+    global _CACHED_BOT_ID
+    if _CACHED_BOT_ID:
+        return _CACHED_BOT_ID
     try:
         headers = {"X-ChatWorkToken": CW_TOKEN}
         res = requests.get("https://api.chatwork.com/v2/me", headers=headers).json()
-        return str(res.get("account_id", ""))
-    except: return ""
-
-BOT_ID = "9692981"
+        _CACHED_BOT_ID = str(res.get("account_id", ""))
+        return _CACHED_BOT_ID
+    except:
+        return ""
 
 def get_user(acc_id):
     res = supabase.table("profiles").select("*").eq("id", acc_id).execute()
@@ -56,27 +60,25 @@ def is_room_admin(room_id, account_id):
 
 def create_trade_room(item_name, item_url, buyer_id):
     headers = {"X-ChatWorkToken": CW_TOKEN}
-    
+    bot_id = get_bot_id()
+    if not bot_id:
+        return None, "Bot ID error"
     room_data = {
         "name": f"【取引】{item_name}",
         "description": f"商品: {item_name}\nURL: {item_url}\n購入者ID: {buyer_id}",
         "link": 1,
         "link_need_acceptance": 0,
-        "members_admin_ids": BOT_ID  
+        "members_admin_ids": bot_id  
     }
-    
     try:
         r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_data).json()
         new_rid = r_res.get("room_id")
-        
         if not new_rid:
-            # エラーの詳細をチャットに返せるようにする
-            return None, f"APIエラー: {r_res}"
-            
+            return None, str(r_res.get("errors") or r_res.get("message"))
         l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
         return l_res.get("public_url"), None
     except Exception as e:
-        return None, f"システムエラー: {str(e)}"
+        return None, str(e)
 
 @app.route("/", methods=["GET"])
 def index(): return "Bot Active"
@@ -91,15 +93,12 @@ def webhook():
     msg_id = event.get("message_id")
     body = event.get("body", "").strip()
 
-    if not acc_id or acc_id == BOT_ID: return Response(status=200)
+    if not acc_id or acc_id == get_bot_id(): return Response(status=200)
 
     user = get_user(acc_id)
     if user.get("is_blacklisted"): return Response(status=200)
     is_admin = is_room_admin(room_id, acc_id)
 
-    # --- コマンド処理 ---
-
-    # 1. おみくじ
     if body == "/omikuji":
         today = datetime.now().date().isoformat()
         if user.get("last_omikuji_at") == today:
@@ -110,7 +109,6 @@ def webhook():
             send_cw(room_id, acc_id, msg_id, f"結果：{res['n']} ({res['p']}pt獲得)")
         return Response(status=200)
 
-    # 2. ステータス確認
     elif body.startswith("/status"):
         parts = body.split(" ")
         if len(parts) >= 2:
@@ -131,14 +129,12 @@ def webhook():
             )
         return Response(status=200)
 
-    # 3. ショップ
     elif body == "/shop":
         items = supabase.table("items").select("*").execute().data
         msg = "[info][title]🏪 ショップ[/title]" + "".join([f"ID:{i['id']} {i['name']}({i['price']}pt)\n" for i in items]) + "購入: /buy ID[/info]"
         send_cw(room_id, acc_id, msg_id, msg)
         return Response(status=200)
 
-    # 3-1. 購入
     elif body.startswith("/buy "):
         parts = body.split()
         if len(parts) >= 2:
@@ -147,21 +143,16 @@ def webhook():
             if item_res.data:
                 target = item_res.data[0]
                 if (user.get("points") or 0) >= target["price"]:
-                    # 1. ポイントを引く
-                    update_user(acc_id, {"points": user["points"] - target["price"]})
-                    
-                    # 2. 関数を使ってルーム作成
                     link_url, errors = create_trade_room(target['name'], target.get('url', 'なし'), acc_id)
-                    
                     if link_url:
+                        update_user(acc_id, {"points": user["points"] - target["price"]})
                         send_cw(room_id, acc_id, msg_id, f"購入完了！\n専用ルームはこちら:\n{link_url}")
                     else:
-                        send_cw(room_id, acc_id, msg_id, f"購入はできましたが、ルーム作成に失敗しました。\nエラー: {errors}")
+                        send_cw(room_id, acc_id, msg_id, f"ルーム作成に失敗したため購入を中断しました。\nエラー: {errors}")
                 else:
                     send_cw(room_id, acc_id, msg_id, "ポイントが足りません。")
         return Response(status=200)
     
-    # 3-2. 商品追加（販売人専用）
     elif body.startswith("/add_item "):
         if not user.get("is_seller"):
             send_cw(room_id, acc_id, msg_id, "エラー: 販売人権限がありません。")
@@ -172,7 +163,6 @@ def webhook():
                     item_name = parts[1]
                     price = int(parts[2])
                     item_url = " ".join(parts[3:])
-                    
                     supabase.table("items").insert({
                         "name": item_name,
                         "price": price,
@@ -186,7 +176,6 @@ def webhook():
                 send_cw(room_id, acc_id, msg_id, "使用法: /add_item 名前 価格 URL")
         return Response(status=200)
 
-    # 4. 職業・仕事
     elif body == "/job":
         jobs = supabase.table("jobs").select("*").execute().data
         msg = "[info][title]💼 職業一覧[/title]" + "".join([f"・{j['name']} (費用:{j['price']}pt)\n" for j in jobs]) + "就職: /job 職業名[/info]"
@@ -234,7 +223,6 @@ def webhook():
                     send_cw(room_id, acc_id, msg_id, f"{reward}pt 獲得！")
         return Response(status=200)
 
-    # 5. 管理者リセット
     elif is_admin and body == "/daily_reset":
         try:
             supabase.table("profiles").update({
@@ -246,7 +234,6 @@ def webhook():
             send_cw(room_id, acc_id, msg_id, f"エラー: {e}")
         return Response(status=200)
 
-    # 6. 特殊アクション
     elif body.startswith("/give "):
         parts = body.split(" ")
         if len(parts) >= 3:
@@ -306,7 +293,6 @@ def webhook():
                     send_cw(room_id, acc_id, msg_id, "獲物がいません。")
         return Response(status=200)
 
-    # 7. 通常発言
     update_user(acc_id, {"points": (user.get("points") or 0) + 1})
     return Response(status=200)
 
