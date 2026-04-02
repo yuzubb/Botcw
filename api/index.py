@@ -55,35 +55,28 @@ def is_room_admin(room_id, account_id):
     except: return False
 
 def create_trade_room(item_name, item_url, buyer_id):
-    """
-    取引ルームを作成し、招待リンクを返す関数
-    """
     headers = {"X-ChatWorkToken": CW_TOKEN}
     
-    # ルーム作成のパラメーター
-    # members_admin_ids にボットのIDを指定するのが必須
     room_data = {
         "name": f"【取引】{item_name}",
         "description": f"商品: {item_name}\nURL: {item_url}\n購入者ID: {buyer_id}",
         "link": 1,
         "link_need_acceptance": 0,
-        "members_admin_ids": BOT_ID  # ← これが足りなかった必須項目
+        "members_admin_ids": BOT_ID  
     }
     
     try:
-        # 1. ルーム作成
         r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_data).json()
         new_rid = r_res.get("room_id")
         
         if not new_rid:
-            return None, r_res.get("errors")
+            # エラーの詳細をチャットに返せるようにする
+            return None, f"APIエラー: {r_res}"
             
-        # 2. 招待リンクを取得
         l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
         return l_res.get("public_url"), None
     except Exception as e:
-        return None, [str(e)]
-
+        return None, f"システムエラー: {str(e)}"
 
 @app.route("/", methods=["GET"])
 def index(): return "Bot Active"
