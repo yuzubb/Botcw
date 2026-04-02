@@ -115,12 +115,14 @@ def webhook():
         return Response(status=200)
 
     elif body.startswith("/buy "):
-        item_id = body.split(" ")[1]
-        item = supabase.table("items").select("*").eq("id", item_id).execute().data
-        if item and (user.get('points') or 0) >= item[0]['price']:
-            update_user(acc_id, {"points": user['points'] - item[0]['price']})
-            send_cw(room_id, acc_id, msg_id, f"購入完了: {item[0]['url']}")
-        else: send_cw(room_id, acc_id, msg_id, "pt不足または商品なし")
+        p = body.split(" ")
+        if len(p) >= 2:
+            item_id = p[1]
+            item = supabase.table("items").select("*").eq("id", item_id).execute().data
+            if item and (user.get('points') or 0) >= item[0]['price']:
+                update_user(acc_id, {"points": user['points'] - item[0]['price']})
+                send_cw(room_id, acc_id, msg_id, f"購入完了: {item[0]['url']}")
+            else: send_cw(room_id, acc_id, msg_id, "pt不足または商品なし")
         return Response(status=200)
 
     # 4. 職業・仕事
@@ -171,27 +173,19 @@ def webhook():
                     send_cw(room_id, acc_id, msg_id, f"{reward}pt 獲得！")
         return Response(status=200)
 
-    # 6. 管理者コマンド (is_admin のブロック内に追加)
-    elif is_admin:
-        if body == "/daily_reset":
-            try:
-                # 全ユーザー(全行)の制限カラムをリセット
-                # .neq("id", "0") は「全行」を対象にするためのテクニックです
-                supabase.table("profiles").update({
-                    "work_count": 0,
-                    "last_work_day": None,
-                    "last_omikuji_at": None,
-                    "last_hack_at": None,
-                    "last_steal_at": None
-                }).neq("id", "0").execute()
-                
-                send_cw(room_id, acc_id, msg_id, "【システム】全ユーザーのデイリー制限をリセットしました。")
-            except Exception as e:
-                send_cw(room_id, acc_id, msg_id, f"リセット失敗: {str(e)}")
-            return Response(status=200)
+    # 5. 管理者リセット
+    elif is_admin and body == "/daily_reset":
+        try:
+            supabase.table("profiles").update({
+                "work_count": 0, "last_work_day": None, "last_omikuji_at": None,
+                "last_hack_at": None, "last_steal_at": None
+            }).neq("id", "0").execute()
+            send_cw(room_id, acc_id, msg_id, "デイリー制限をリセットしました。")
+        except Exception as e:
+            send_cw(room_id, acc_id, msg_id, f"エラー: {e}")
+        return Response(status=200)
 
-        
-    # 5. 特殊アクション
+    # 6. 特殊アクション
     elif body.startswith("/give "):
         parts = body.split(" ")
         if len(parts) >= 3:
@@ -203,111 +197,57 @@ def webhook():
                     update_user(acc_id, {"points": user["points"] - amt})
                     update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
                     send_cw(room_id, acc_id, msg_id, f"[pname:{target_id}]さんに{amt}pt送りました")
-                else: send_cw(room_id, acc_id, msg_id, "送金失敗(pt不足等)")
+                else: send_cw(room_id, acc_id, msg_id, "送金失敗")
         return Response(status=200)
 
     elif body.startswith("/hack "):
         if user.get("job") != "ハッカー":
-            send_cw(room_id, acc_id, msg_id, "ハッカー専用コマンドです。")
-    else:
-        parts = body.split(" ")
-        if len(parts) < 2:
-            send_cw(room_id, acc_id, msg_id, "使い方: /hack アカウントID")
+            send_cw(room_id, acc_id, msg_id, "ハッカー専用です。")
         else:
-            target_id = parts[1]
-            if target_id == acc_id:
-                send_cw(room_id, acc_id, msg_id, "自分はハックできません。")
+            parts = body.split(" ")
+            if len(parts) < 2:
+                send_cw(room_id, acc_id, msg_id, "使い方: /hack ID")
             else:
+                target_id = parts[1]
                 today = datetime.now().date().isoformat()
-                if user.get("last_hack_at") == today:
-                    send_cw(room_id, acc_id, msg_id, "ハックは1日1回までです。")
+                if target_id == acc_id:
+                    send_cw(room_id, acc_id, msg_id, "自分は不可。")
+                elif user.get("last_hack_at") == today:
+                    send_cw(room_id, acc_id, msg_id, "1日1回まで。")
                 else:
                     target_user = get_user(target_id)
                     update_user(acc_id, {"last_hack_at": today})
-                    SUCCESS_RATE = 0.4
-                    if random.random() >= SUCCESS_RATE:
-                        send_cw(room_id, acc_id, msg_id, "💻 ハック失敗…セキュリティが固かった！（成功率40%）")
-                    else:
-                        steal_amt = 100
+                    if random.random() < 0.4:
                         reward = random.randint(50, 100)
-                        new_target_pts = max(0, (target_user.get("points") or 0) - steal_amt)
-                        update_user(target_id, {"points": new_target_pts})
+                        update_user(target_id, {"points": max(0, (target_user.get("points") or 0) - 100)})
                         update_user(acc_id, {"points": (user.get("points") or 0) + reward})
-                        send_cw(room_id, acc_id, msg_id,
-                            f"✅ ハック成功！[pname:{target_id}]から100ptを抜き取り、{reward}ptを獲得しました💰")
-                        
+                        send_cw(room_id, acc_id, msg_id, f"成功！{reward}pt獲得")
+                    else:
+                        send_cw(room_id, acc_id, msg_id, "失敗...")
+        return Response(status=200)
+
     elif body == "/steal":
         if user.get("job") != "泥棒":
             send_cw(room_id, acc_id, msg_id, "泥棒専用です。")
         else:
             today = datetime.now().date().isoformat()
             if user.get("last_steal_at") == today:
-                send_cw(room_id, acc_id, msg_id, "1日1回までです。欲張りはいけません。")
+                send_cw(room_id, acc_id, msg_id, "1日1回まで。")
             else:
-                # ターゲットの抽出（自分以外、かつポイントを持っている人）
                 targets = supabase.table("profiles").select("*").neq("id", acc_id).gt("points", 0).execute().data
-                
                 if targets:
-                    # ターゲットをランダムに決定
                     t = random.choice(targets)
-                    
-                    # --- 強化ポイント ---
-                    # 奪う額を 500pt 〜 1000pt に設定（相手の所持金がそれ以下の場合は全額）
-                    steal_min = 500
-                    steal_max = 1000
-                    max_possible = min(t['points'], random.randint(steal_min, steal_max))
-                    
-                    # 更新処理
-                    update_user(acc_id, {
-                        "points": (user.get('points') or 0) + max_possible,
-                        "last_steal_at": today
-                    })
-                    update_user(t['id'], {
-                        "points": t['points'] - max_possible
-                    })
-                    
-                    send_cw(room_id, acc_id, msg_id, 
-                        f"💰 【強奪成功】\n"
-                        f"[pname:{t['id']}]さんから {max_possible}pt 奪い取りました！\n"
-                        f"プロの業だね。"
-                    )
+                    amt = min(t['points'], random.randint(500, 1000))
+                    update_user(acc_id, {"points": (user.get('points') or 0) + amt, "last_steal_at": today})
+                    update_user(t['id'], {"points": t['points'] - amt})
+                    send_cw(room_id, acc_id, msg_id, f"成功！[pname:{t['id']}]から{amt}pt奪取")
                 else:
-                    send_cw(room_id, acc_id, msg_id, "ターゲット（ポイント持ち）が見当たりません。")
+                    send_cw(room_id, acc_id, msg_id, "獲物がいません。")
         return Response(status=200)
 
-    elif body == "/unlock":
-        if user.get("is_seller"): send_cw(room_id, acc_id, msg_id, "既に販売人です。")
-        elif (user.get("points") or 0) >= 5000:
-            update_user(acc_id, {"points": user["points"] - 5000, "is_seller": True})
-            send_cw(room_id, acc_id, msg_id, "販売人になりました！")
-        else: send_cw(room_id, acc_id, msg_id, "5000pt必要です。")
-        return Response(status=200)
-
-    elif body.startswith("/sell "):
-        if user.get("is_seller"):
-            p = body.split(None, 2)
-            if len(p) >= 3: send_cw(room_id, acc_id, msg_id, f"[info][title]📢 出品[/title]品: {p[1]}\n価: {p[2]}pt\n購入は [code]/give {acc_id} {p[2]}[/code][/info]")
-        else: send_cw(room_id, acc_id, msg_id, "/unlock が必要です。")
-        return Response(status=200)
-
-    # 6. 管理者コマンド
-    elif is_admin:
-        if body.startswith("/add_job "):
-            d = body.replace("/add_job ", "").split(",")
-            supabase.table("jobs").upsert({"name":d[0],"price":int(d[1]),"min_pt":int(d[2]),"max_pt":int(d[3])}).execute()
-            send_cw(room_id, acc_id, msg_id, "仕事追加完了")
-        elif body.startswith("/del_job "):
-            supabase.table("jobs").delete().eq("name", body.replace("/del_job ", "").strip()).execute()
-            send_cw(room_id, acc_id, msg_id, "仕事削除完了")
-        elif body.startswith("/add_item "):
-            d = body.replace("/add_item ", "").split(",")
-            supabase.table("items").upsert({"id":d[0],"name":d[1],"price":int(d[2]),"description":d[3],"url":d[4]}).execute()
-            send_cw(room_id, acc_id, msg_id, "商品追加完了")
-        elif body.startswith("/del_item "):
-            supabase.table("items").delete().eq("id", body.replace("/del_item ", "").strip()).execute()
-            send_cw(room_id, acc_id, msg_id, "商品削除完了")
-        return Response(status=200)
-
-    # --- 通常発言 +1pt ---
+    # 7. 通常発言
     update_user(acc_id, {"points": (user.get("points") or 0) + 1})
     return Response(status=200)
+
+if __name__ == "__main__":
+    app.run()
