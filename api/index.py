@@ -116,38 +116,39 @@ def webhook():
 
     # 3-1. 購入
     elif body.startswith("/buy "):
-        p = body.split()
-        if len(p) >= 2:
-            item_id = p[1]
-            item_data = supabase.table("items").select("*").eq("id", item_id).execute().data
-            
-            if item_data and (user.get('points') or 0) >= item_data[0]['price']:
-                target = item_data[0]
-                new_pt = user['points'] - target['price']
-                update_user(acc_id, {"points": new_pt})
-                
-                headers = {"X-ChatWorkToken": CW_TOKEN}
-                room_payload = {
-                    "name": f"【取引】{target['name']}",
-                    "description": f"購入者: [pname:{acc_id}]\n商品: {target['name']}\nURL: {target['url']}",
-                    "link": 1,
-                    "link_need_acceptance": 1
-                }
-                
-                try:
-                    r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_payload).json()
-                    new_rid = r_res.get("room_id")
-                    l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
-                    invite_url = l_res.get("public_url")
+        parts = body.split()
+        if len(parts) >= 2:
+            item_id = parts[1]
+            item_res = supabase.table("items").select("*").eq("id", item_id).execute()
+            if item_res.data:
+                target = item_res.data[0]
+                if (user.get("points") or 0) >= target["price"]:
+                    # ポイント減算
+                    new_points = user["points"] - target["price"]
+                    update_user(acc_id, {"points": new_points})
                     
-                    msg = f"購入完了！残り: {new_pt}pt\n専用ルームへ参加申請してください。\n{invite_url}\n※閲覧専用となります。"
-                    send_cw(room_id, acc_id, msg_id, msg)
-                except:
-                    send_cw(room_id, acc_id, msg_id, "購入成功、ルーム作成失敗。管理者に連絡してください。")
-            else:
-                send_cw(room_id, acc_id, msg_id, "pt不足または商品なし。")
-        return Response(status=200)
+                    # 取引ルーム作成
+                    headers = {"X-ChatWorkToken": CW_TOKEN}
+                    room_data = {
+                        "name": f"【取引】{target['name']}",
+                        "description": f"商品: {target['name']}\nURL: {target.get('url', 'なし')}\n購入者ID: {acc_id}",
+                        "link": 1,
+                        "link_need_acceptance": 0 # 1にすると承認制、0にすると即参加
+                    }
+                    r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_data).json()
+                    new_rid = r_res.get("room_id")
+                    
+                    if new_rid:
+                        # 招待リンク取得
+                        l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
+                        link_url = l_res.get("public_url", "リンク取得失敗")
+                        send_cw(room_id, acc_id, msg_id, f"購入完了！\n専用ルームはこちら:\n{link_url}")
+                    else:
+                        send_cw(room_id, acc_id, msg_id, f"購入はできましたが、ルーム作成に失敗しました。管理者に連絡してください。\n(エラー: {r_res.get('errors')})")
+                else:
+                    send_cw(room_id, acc_id, msg_id, f"ポイントが足りません。(所持: {user['points']}pt / 必要: {target['price']}pt)")
 
+    
     # 3-2. 商品追加（販売人専用）
     elif body.startswith("/add_item "):
         if not user.get("is_seller"):
