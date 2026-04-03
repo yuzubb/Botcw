@@ -70,7 +70,7 @@ def create_trade_room(item_name, item_url, buyer_id):
     member_ids = str(buyer_id)  # 購入者はメンバー権限
 
     room_data = {
-        "name": f"【取引】{item_name}",
+        "name": f"【取引】",
         "description": f"商品: {item_name}\nURL: {item_url}\n購入者ID: {buyer_id}",
         "link": "1",
         "link_need_acceptance": "0",
