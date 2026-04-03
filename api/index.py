@@ -260,45 +260,61 @@ def webhook():
         return Response(status=200)
 
     elif body.startswith("/give "):
-        parts = body.split(" ")
-        if len(parts) >= 3:
-            target_id, amt_str = parts[1], parts[2]
-            if amt_str.isdigit():
-                amt = int(amt_str)
-                if amt > 0 and (user.get("points") or 0) >= amt and target_id != acc_id:
-                    target_user = get_user(target_id)
-                    update_user(acc_id, {"points": user["points"] - amt})
-                    update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
-                    send_cw(room_id, acc_id, msg_id, f"[pname:{target_id}]さんに{amt}pt送りました")
-                else: send_cw(room_id, acc_id, msg_id, "送金失敗")
-        return Response(status=200)
+    parts = body.split(" ")
+    if len(parts) >= 3:
+        target_id, amt_str = parts[1], parts[2]
+        if amt_str.isdigit():
+            amt = int(amt_str)
 
-    elif body.startswith("/hack "):
-        if user.get("job") != "ハッカー":
-            send_cw(room_id, acc_id, msg_id, "ハッカー専用です。")
-        else:
-            parts = body.split(" ")
-            if len(parts) < 2:
-                send_cw(room_id, acc_id, msg_id, "使い方: /hack ID")
-            else:
-                target_id = parts[1]
-                today = datetime.now().date().isoformat()
-                if target_id == acc_id:
-                    send_cw(room_id, acc_id, msg_id, "自分は不可。")
-                elif user.get("last_hack_at") == today:
-                    send_cw(room_id, acc_id, msg_id, "1日1回まで。")
+            # 累進税率
+            def calc_tax(amount):
+                if amount >= 10000:
+                    rate = 0.35
+                elif amount >= 5000:
+                    rate = 0.20
+                elif amount >= 1000:
+                    rate = 0.10
                 else:
-                    target_user = get_user(target_id)
-                    update_user(acc_id, {"last_hack_at": today})
-                    if random.random() < 0.4:
-                        reward = random.randint(50, 1000)
-                        update_user(target_id, {"points": max(0, (target_user.get("points") or 0) - 100)})
-                        update_user(acc_id, {"points": (user.get("points") or 0) + reward})
-                        send_cw(room_id, acc_id, msg_id, f"成功！{reward}pt獲得")
-                    else:
-                        send_cw(room_id, acc_id, msg_id, "失敗...")
-        return Response(status=200)
+                    rate = 0.05
+                return max(1, int(amount * rate))  # 最低1pt
 
+            tax = calc_tax(amt)
+            total_cost = amt + tax  # 送金者が払う合計
+            current_pts = user.get("points") or 0
+
+            if amt <= 0:
+                send_cw(room_id, acc_id, msg_id, "送金額は1pt以上で指定してください。")
+            elif target_id == acc_id:
+                send_cw(room_id, acc_id, msg_id, "自分自身には送金できません。")
+            elif current_pts < total_cost:
+                send_cw(room_id, acc_id, msg_id,
+                    f"ポイントが足りません。\n"
+                    f"送金額: {amt}pt ＋ 税金: {tax}pt = 合計: {total_cost}pt 必要\n"
+                    f"現在の所持: {current_pts}pt"
+                )
+            else:
+                target_user = get_user(target_id)
+                update_user(acc_id, {"points": current_pts - total_cost})
+                update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
+
+                rate_label = "35%" if amt >= 10000 else "20%" if amt >= 5000 else "10%" if amt >= 1000 else "5%"
+
+                send_cw(room_id, acc_id, msg_id,
+                    f"[pname:{target_id}]さんに {amt}pt 送金しました\n"
+                    f"─────────────\n"
+                    f"送金額　: {amt}pt\n"
+                    f"税率　　: {rate_label}\n"
+                    f"税金　　: {tax}pt\n"
+                    f"合計支出: {total_cost}pt\n"
+                    f"残高　　: {current_pts - total_cost}pt"
+                )
+        else:
+            send_cw(room_id, acc_id, msg_id, "送金額は数値で指定してください。")
+    else:
+        send_cw(room_id, acc_id, msg_id, "使用法: /give [相手ID] [送金額]")
+    return Response(status=200)
+
+    
     elif body == "/steal":
         if user.get("job") != "泥棒":
             send_cw(room_id, acc_id, msg_id, "泥棒専用です。")
