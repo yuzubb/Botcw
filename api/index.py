@@ -95,7 +95,7 @@ def create_trade_room(item_name, item_url, buyer_id):
             headers=headers
         ).json()
 
-        public_url = l_res.get("public_url") or l_res.get("url")
+        invite_url = l_res.get("url") or l_res.get("url")
         if not public_url:
             # リンクが取得できなくてもルームIDをフォールバックとして返す
             return f"https://www.chatwork.com/#!rid{new_rid}", None
