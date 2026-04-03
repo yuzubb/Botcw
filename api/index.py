@@ -328,49 +328,123 @@ def webhook():
         parts = body.split(" ")
         if len(parts) >= 3:
             target_id, amt_str = parts[1], parts[2]
-            if amt_str.isdigit():
-                amt = int(amt_str)
-                tax = calc_tax(amt)
-                total_cost = amt + tax
-                current_pts = user.get("points") or 0
+            current_pts = user.get("points") or 0
 
-                if amt <= 0:
-                    send_cw(room_id, acc_id, msg_id, "送金額は1pt以上で指定してください。")
-                elif target_id == acc_id:
-                    send_cw(room_id, acc_id, msg_id, "自分自身には送金できません。")
-                elif current_pts < total_cost:
-                    send_cw(room_id, acc_id, msg_id,
-                        f"ポイントが足りません。\n"
-                        f"送金額: {amt}pt ＋ 税金: {tax}pt = 合計: {total_cost}pt 必要\n"
-                        f"現在の所持: {current_pts}pt"
-                    )
-                else:
-                    target_user = get_user(target_id)
-                    update_user(acc_id, {"points": current_pts - total_cost})
-                    update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
-
-                    if amt >= 10000:
-                        rate_label = "35%"
-                    elif amt >= 5000:
-                        rate_label = "20%"
-                    elif amt >= 1000:
-                        rate_label = "10%"
+            # allの場合は全所持ポイントを送金
+            if amt_str == "all":
+                # 税込で払える最大額を逆算: total_cost = amt + tax(amt) <= current_pts
+                # 近似で二分探索
+                lo, hi = 1, current_pts
+                amt = 0
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    if mid + calc_tax(mid) <= current_pts:
+                        amt = mid
+                        lo = mid + 1
                     else:
-                        rate_label = "5%"
-
-                    send_cw(room_id, acc_id, msg_id,
-                        f"[pname:{target_id}]さんに {amt}pt 送金しました\n"
-                        f"─────────────\n"
-                        f"送金額　: {amt}pt\n"
-                        f"税率　　: {rate_label}\n"
-                        f"税金　　: {tax}pt\n"
-                        f"合計支出: {total_cost}pt\n"
-                        f"残高　　: {current_pts - total_cost}pt"
-                    )
+                        hi = mid - 1
+                if amt <= 0:
+                    send_cw(room_id, acc_id, msg_id, "送金できるポイントがありません。")
+                    return Response(status=200)
+            elif amt_str.isdigit():
+                amt = int(amt_str)
             else:
-                send_cw(room_id, acc_id, msg_id, "送金額は数値で指定してください。")
+                send_cw(room_id, acc_id, msg_id, "送金額は数値か all で指定してください。")
+                return Response(status=200)
+
+            tax = calc_tax(amt)
+            total_cost = amt + tax
+
+            if amt <= 0:
+                send_cw(room_id, acc_id, msg_id, "送金額は1pt以上で指定してください。")
+            elif target_id == acc_id:
+                send_cw(room_id, acc_id, msg_id, "自分自身には送金できません。")
+            elif current_pts < total_cost:
+                send_cw(room_id, acc_id, msg_id,
+                    f"ポイントが足りません。\n"
+                    f"送金額: {amt}pt ＋ 税金: {tax}pt = 合計: {total_cost}pt 必要\n"
+                    f"現在の所持: {current_pts}pt"
+                )
+            else:
+                target_user = get_user(target_id)
+                update_user(acc_id, {"points": current_pts - total_cost})
+                update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
+
+                if amt >= 10000:
+                    rate_label = "35%"
+                elif amt >= 5000:
+                    rate_label = "20%"
+                elif amt >= 1000:
+                    rate_label = "10%"
+                else:
+                    rate_label = "5%"
+
+                send_cw(room_id, acc_id, msg_id,
+                    f"[pname:{target_id}]さんに {amt}pt 送金しました\n"
+                    f"─────────────\n"
+                    f"送金額　: {amt}pt\n"
+                    f"税率　　: {rate_label}\n"
+                    f"税金　　: {tax}pt\n"
+                    f"合計支出: {total_cost}pt\n"
+                    f"残高　　: {current_pts - total_cost}pt"
+                )
         else:
-            send_cw(room_id, acc_id, msg_id, "使用法: /give [相手ID] [送金額]")
+            send_cw(room_id, acc_id, msg_id, "使用法: /give [相手ID] [送金額 or all]")
+        return Response(status=200)
+
+    # /help
+    elif body == "/help":
+        msg = (
+            "[info][title]📖 コマンド一覧[/title]"
+            "【基本】\n"
+            "/omikuji\n"
+            "　おみくじを引く。1日1回。結果に応じてpt獲得。\n"
+            "　大吉:+100pt / 吉:+50pt / 凶:+5pt\n\n"
+            "/status\n"
+            "　自分のステータス(所持pt・職業・販売人フラグ)を確認。\n"
+            "/status [ID]\n"
+            "　指定ユーザーのステータスを確認。\n\n"
+            "/ranking\n"
+            "　ポイント上位10名を表示。\n\n"
+            "【職業】\n"
+            "/job\n"
+            "　就ける職業の一覧と費用を表示。\n"
+            "/job [職業名]\n"
+            "　指定の職業に就く。費用ptが必要。\n\n"
+            "/work\n"
+            "　仕事をしてptを稼ぐ。30分ごと・1日最大10回。\n"
+            "　5%の確率でボーナス2倍。職業に就いていないと使用不可。\n\n"
+            "【ショップ・取引】\n"
+            "/shop\n"
+            "　販売中のアイテム一覧を表示。\n"
+            "/buy [ID]\n"
+            "　アイテムを購入。専用取引ルームが作成される。\n"
+            "/add_item [名前] [価格] [URL]\n"
+            "　アイテムを出品(販売人権限が必要)。\n\n"
+            "【送金】\n"
+            "/give [相手ID] [金額]\n"
+            "/give [相手ID] all\n"
+            "　相手にptを送金。累進税あり。\n"
+            "　〜999pt:5% / 1000〜:10% / 5000〜:20% / 10000〜:35%\n"
+            "　allで税引き後に送れる最大額を自動計算して送金。\n\n"
+            "【銀行】\n"
+            "/bank\n"
+            "　銀行残高・未確定利息・財布を確認。\n"
+            "/bank deposit [金額]\n"
+            "　銀行に預ける。利息は0.5%/時間。\n"
+            "/bank withdraw [金額 or all]\n"
+            "　銀行から引き出す。利息込みで受け取れる。\n\n"
+            "【職業専用】\n"
+            "/hack [相手ID]\n"
+            "　ハッカー専用。40%の確率で相手から50〜1000pt奪取。1日1回。\n"
+            "/steal\n"
+            "　泥棒専用。ランダムなユーザーから500〜1000pt奪取。1日1回。\n\n"
+            "【管理者専用】\n"
+            "/daily_reset\n"
+            "　全ユーザーのデイリー制限をリセット。\n"
+            "[/info]"
+        )
+        send_cw(room_id, acc_id, msg_id, msg)
         return Response(status=200)
 
     # /ranking
