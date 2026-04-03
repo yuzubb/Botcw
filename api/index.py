@@ -85,6 +85,18 @@ def calc_tax(amount):
         rate = 0.05
     return max(1, int(amount * rate))
 
+def delete_cw(room_id, message_id):
+    """指定したメッセージを削除する"""
+    headers = {"X-ChatWorkToken": CW_TOKEN}
+    try:
+        res = requests.delete(
+            f"https://api.chatwork.com/v2/rooms/{room_id}/messages/{message_id}",
+            headers=headers
+        )
+        return res.status_code == 200
+    except:
+        return False
+
 
 def create_trade_room(item_name, item_url, buyer_id):
     headers = {"X-ChatWorkToken": CW_TOKEN}
@@ -169,6 +181,30 @@ def webhook():
             })
             send_cw(room_id, acc_id, msg_id, f"結果：{res['n']} ({res['p']}pt獲得)")
         return Response(status=200)
+
+    
+    elif "/del" in body
+        referenced_msgs = re.findall(r"to=\d+-(\d+)", body)
+        
+        bot_id = get_bot_id()
+        deleted_count = 0
+
+        for target_msg_id in referenced_msgs:
+            headers = {"X-ChatWorkToken": CW_TOKEN}
+            try:
+                msg_detail = requests.get(
+                    f"https://api.chatwork.com/v2/rooms/{room_id}/messages/{target_msg_id}",
+                    headers=headers
+                ).json()
+                
+                if str(msg_detail.get("account", {}).get("account_id")) == bot_id:
+                    if delete_cw(room_id, target_msg_id):
+                        deleted_count += 1
+            except:
+                continue
+        
+        return Response(status=200)
+
 
     # /status
     elif body.startswith("/status"):
