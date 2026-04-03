@@ -373,6 +373,142 @@ def webhook():
             send_cw(room_id, acc_id, msg_id, "使用法: /give [相手ID] [送金額]")
         return Response(status=200)
 
+    # /ranking
+elif body == "/ranking":
+    all_users = supabase.table("profiles").select("id, points").order("points", desc=True).limit(10).execute().data
+    msg = "[info][title]🏆 ポイントランキング[/title]"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, u in enumerate(all_users):
+        prefix = medals[i] if i < 3 else f"{i+1}位"
+        msg += f"{prefix} [pname:{u['id']}] {u['points']}pt\n"
+    msg += "[/info]"
+    send_cw(room_id, acc_id, msg_id, msg)
+    return Response(status=200)
+
+# /bank
+elif body == "/bank" or body.startswith("/bank "):
+    parts = body.split()
+
+    # 残高確認
+    if len(parts) == 1:
+        bank_pts = user.get("bank_points") or 0
+        deposited_at = user.get("bank_deposited_at")
+        interest = 0
+        if bank_pts > 0 and deposited_at:
+            try:
+                dep_time = datetime.fromisoformat(deposited_at.replace("Z", "+00:00")).replace(tzinfo=None)
+                hours = (datetime.now() - dep_time).total_seconds() / 3600
+                interest = int(bank_pts * 0.005 * int(hours))
+            except:
+                pass
+        send_cw(room_id, acc_id, msg_id,
+            f"銀行残高\n"
+            f"─────────────\n"
+            f"預入額　: {bank_pts}pt\n"
+            f"未確定利息: +{interest}pt\n"
+            f"（引き出し時に加算）\n"
+            f"財布　　: {user.get('points') or 0}pt"
+        )
+        return Response(status=200)
+
+    action = parts[1] if len(parts) >= 2 else ""
+    amt_str = parts[2] if len(parts) >= 3 else ""
+
+    # 預ける
+    if action == "deposit":
+        if not amt_str.isdigit():
+            send_cw(room_id, acc_id, msg_id, "使用法: /bank deposit 金額")
+        else:
+            amt = int(amt_str)
+            current_pts = user.get("points") or 0
+            bank_pts = user.get("bank_points") or 0
+
+            if amt <= 0:
+                send_cw(room_id, acc_id, msg_id, "1pt以上で指定してください。")
+            elif current_pts < amt:
+                send_cw(room_id, acc_id, msg_id,
+                    f"ポイントが足りません。\n財布: {current_pts}pt"
+                )
+            else:
+                # 既に預けている場合、利息を確定してから追加
+                interest = 0
+                deposited_at = user.get("bank_deposited_at")
+                if bank_pts > 0 and deposited_at:
+                    try:
+                        dep_time = datetime.fromisoformat(deposited_at.replace("Z", "+00:00")).replace(tzinfo=None)
+                        hours = (datetime.now() - dep_time).total_seconds() / 3600
+                        interest = int(bank_pts * 0.005 * int(hours))
+                    except:
+                        pass
+
+                new_bank = bank_pts + interest + amt
+                update_user(acc_id, {
+                    "points": current_pts - amt,
+                    "bank_points": new_bank,
+                    "bank_deposited_at": datetime.now().isoformat(),
+                })
+                send_cw(room_id, acc_id, msg_id,
+                    f"預け入れ完了！\n"
+                    f"─────────────\n"
+                    f"預入額　: {amt}pt\n"
+                    f"確定利息: +{interest}pt\n"
+                    f"銀行残高: {new_bank}pt\n"
+                    f"財布　　: {current_pts - amt}pt"
+                )
+
+    # 引き出す
+    elif action == "withdraw":
+        if not amt_str.isdigit() and amt_str != "all":
+            send_cw(room_id, acc_id, msg_id, "使用法: /bank withdraw 金額 or /bank withdraw all")
+        else:
+            bank_pts = user.get("bank_points") or 0
+            deposited_at = user.get("bank_deposited_at")
+
+            # 利息計算
+            interest = 0
+            if bank_pts > 0 and deposited_at:
+                try:
+                    dep_time = datetime.fromisoformat(deposited_at.replace("Z", "+00:00")).replace(tzinfo=None)
+                    hours = (datetime.now() - dep_time).total_seconds() / 3600
+                    interest = int(bank_pts * 0.005 * int(hours))
+                except:
+                    pass
+
+            total_bank = bank_pts + interest
+            amt = total_bank if amt_str == "all" else int(amt_str)
+
+            if amt <= 0:
+                send_cw(room_id, acc_id, msg_id, "1pt以上で指定してください。")
+            elif amt > total_bank:
+                send_cw(room_id, acc_id, msg_id,
+                    f"引き出せません。\n銀行残高(利息込): {total_bank}pt"
+                )
+            else:
+                remaining = total_bank - amt
+                update_user(acc_id, {
+                    "points": (user.get("points") or 0) + amt,
+                    "bank_points": remaining,
+                    "bank_deposited_at": datetime.now().isoformat() if remaining > 0 else None,
+                })
+                send_cw(room_id, acc_id, msg_id,
+                    f"引き出し完了！\n"
+                    f"─────────────\n"
+                    f"引出額　: {amt}pt\n"
+                    f"確定利息: +{interest}pt\n"
+                    f"銀行残高: {remaining}pt\n"
+                    f"財布　　: {(user.get('points') or 0) + amt}pt"
+                )
+    else:
+        send_cw(room_id, acc_id, msg_id,
+            "使用法:\n"
+            "/bank — 残高確認\n"
+            "/bank deposit 金額 — 預ける\n"
+            "/bank withdraw 金額 — 引き出す\n"
+            "/bank withdraw all — 全額引き出す"
+        )
+    return Response(status=200)
+
+
     # /hack (ハッカー専用)
     elif body.startswith("/hack "):
         if user.get("job") != "ハッカー":
