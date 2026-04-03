@@ -62,24 +62,50 @@ def create_trade_room(item_name, item_url, buyer_id):
     headers = {"X-ChatWorkToken": CW_TOKEN}
     bot_id = get_bot_id()
     if not bot_id:
-        return None, "Bot ID error"
+        return None, "Bot ID取得エラー"
+
+    # ボットIDと購入者IDの両方を管理者に設定
+    # ※購入者がコンタクト済みでない場合はmembers_member_idsに入れる
+    admin_ids = bot_id  # ボットのみ管理者
+    member_ids = str(buyer_id)  # 購入者はメンバー権限
+
     room_data = {
         "name": f"【取引】{item_name}",
         "description": f"商品: {item_name}\nURL: {item_url}\n購入者ID: {buyer_id}",
-        "link": 1,
-        "link_need_acceptance": 0,
-        "members_admin_ids": "9692981"  
+        "link": "1",
+        "link_need_acceptance": "0",
+        "members_admin_ids": admin_ids,
+        "members_member_ids": member_ids,
     }
+
     try:
-        r_res = requests.post("https://api.chatwork.com/v2/rooms", headers=headers, data=room_data).json()
+        r_res = requests.post(
+            "https://api.chatwork.com/v2/rooms",
+            headers=headers,
+            data=room_data  # bodyパラメータで送信（2025年API仕様変更対応）
+        ).json()
+
         new_rid = r_res.get("room_id")
         if not new_rid:
-            return None, str(r_res.get("errors") or r_res.get("message"))
-        l_res = requests.get(f"https://api.chatwork.com/v2/rooms/{new_rid}/link", headers=headers).json()
-        return l_res.get("public_url"), None
+            return None, str(r_res.get("errors") or r_res.get("message") or r_res)
+
+        # リンク取得
+        l_res = requests.get(
+            f"https://api.chatwork.com/v2/rooms/{new_rid}/link",
+            headers=headers
+        ).json()
+
+        public_url = l_res.get("public_url") or l_res.get("url")
+        if not public_url:
+            # リンクが取得できなくてもルームIDをフォールバックとして返す
+            return f"https://www.chatwork.com/#!rid{new_rid}", None
+
+        return public_url, None
+
     except Exception as e:
         return None, str(e)
 
+        
 @app.route("/", methods=["GET"])
 def index(): return "Bot Active"
 
