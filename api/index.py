@@ -75,6 +75,12 @@ def is_room_admin(room_id, account_id):
         return False
 
 
+def get_reply_target_id(body):
+    """返信メッセージから [rp aid=XXXXX ...] のアカウントIDを取得する"""
+    match = re.search(r"\[rp aid=(\d+)", body)
+    return match.group(1) if match else None
+
+
 def calc_tax(amount):
     if amount >= 10000:
         rate = 0.35
@@ -361,72 +367,89 @@ def webhook():
         return Response(status=200)
 
     # /give (累進税あり)
-    elif body.startswith("/give "):
-        parts = body.split(" ")
-        if len(parts) >= 3:
+    elif body.startswith("/give ") or body == "/give":
+        # 返信型: /give [金額 or all] ← リプライ先のIDを自動取得
+        # 通常型: /give [相手ID] [金額 or all]
+        reply_target_id = get_reply_target_id(body)
+
+        # コマンド部分のみ抽出（[rp ...][pname:...]などのCWタグを除去）
+        clean_body = re.sub(r"\[rp[^\]]*\]|\[pname:[^\]]*\]", "", body).strip()
+        parts = clean_body.split()
+
+        # 返信型かどうか判定: /give の引数が1つ（金額のみ）かつリプライあり
+        if reply_target_id and len(parts) == 2:
+            target_id = reply_target_id
+            amt_str = parts[1]
+        elif len(parts) >= 3:
             target_id, amt_str = parts[1], parts[2]
-            current_pts = user.get("points") or 0
-
-            # allの場合は全所持ポイントを送金
-            if amt_str == "all":
-                # 税込で払える最大額を逆算: total_cost = amt + tax(amt) <= current_pts
-                # 近似で二分探索
-                lo, hi = 1, current_pts
-                amt = 0
-                while lo <= hi:
-                    mid = (lo + hi) // 2
-                    if mid + calc_tax(mid) <= current_pts:
-                        amt = mid
-                        lo = mid + 1
-                    else:
-                        hi = mid - 1
-                if amt <= 0:
-                    send_cw(room_id, acc_id, msg_id, "送金できるポイントがありません。")
-                    return Response(status=200)
-            elif amt_str.isdigit():
-                amt = int(amt_str)
-            else:
-                send_cw(room_id, acc_id, msg_id, "送金額は数値か all で指定してください。")
-                return Response(status=200)
-
-            tax = calc_tax(amt)
-            total_cost = amt + tax
-
-            if amt <= 0:
-                send_cw(room_id, acc_id, msg_id, "送金額は1pt以上で指定してください。")
-            elif target_id == acc_id:
-                send_cw(room_id, acc_id, msg_id, "自分自身には送金できません。")
-            elif current_pts < total_cost:
-                send_cw(room_id, acc_id, msg_id,
-                    f"ポイントが足りません。\n"
-                    f"送金額: {amt}pt ＋ 税金: {tax}pt = 合計: {total_cost}pt 必要\n"
-                    f"現在の所持: {current_pts}pt"
-                )
-            else:
-                target_user = get_user(target_id)
-                update_user(acc_id, {"points": current_pts - total_cost})
-                update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
-
-                if amt >= 10000:
-                    rate_label = "35%"
-                elif amt >= 5000:
-                    rate_label = "20%"
-                elif amt >= 1000:
-                    rate_label = "10%"
-                else:
-                    rate_label = "5%"
-
-                send_cw(room_id, acc_id, msg_id,
-                    f"[pname:{target_id}]さんに {amt}pt 送金しました\n"
-                    f"─────────────\n"
-                    f"送金額　: {amt}pt\n"
-                    f"税率　　: {rate_label}\n"
-                    f"税金　　: {tax}pt\n"
-                    f"合計支出: {total_cost}pt\n"
-                    f"残高　　: {current_pts - total_cost}pt"
-                )
         else:
-            send_cw(room_id, acc_id, msg_id, "使用法: /give [相手ID] [送金額 or all]")
+            send_cw(room_id, acc_id, msg_id,
+                "使用法:\n"
+                "・返信して /give [金額 or all] — リプライ先に送金\n"
+                "・/give [相手ID] [金額 or all] — ID指定で送金"
+            )
+            return Response(status=200)
+
+        current_pts = user.get("points") or 0
+
+        # allの場合は全所持ポイントを送金
+        if amt_str == "all":
+            # 税込で払える最大額を逆算: total_cost = amt + tax(amt) <= current_pts
+            # 近似で二分探索
+            lo, hi = 1, current_pts
+            amt = 0
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                if mid + calc_tax(mid) <= current_pts:
+                    amt = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            if amt <= 0:
+                send_cw(room_id, acc_id, msg_id, "送金できるポイントがありません。")
+                return Response(status=200)
+        elif amt_str.isdigit():
+            amt = int(amt_str)
+        else:
+            send_cw(room_id, acc_id, msg_id, "送金額は数値か all で指定してください。")
+            return Response(status=200)
+
+        tax = calc_tax(amt)
+        total_cost = amt + tax
+
+        if amt <= 0:
+            send_cw(room_id, acc_id, msg_id, "送金額は1pt以上で指定してください。")
+        elif target_id == acc_id:
+            send_cw(room_id, acc_id, msg_id, "自分自身には送金できません。")
+        elif current_pts < total_cost:
+            send_cw(room_id, acc_id, msg_id,
+                f"ポイントが足りません。\n"
+                f"送金額: {amt}pt ＋ 税金: {tax}pt = 合計: {total_cost}pt 必要\n"
+                f"現在の所持: {current_pts}pt"
+            )
+        else:
+            target_user = get_user(target_id)
+            update_user(acc_id, {"points": current_pts - total_cost})
+            update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
+
+            if amt >= 10000:
+                rate_label = "35%"
+            elif amt >= 5000:
+                rate_label = "20%"
+            elif amt >= 1000:
+                rate_label = "10%"
+            else:
+                rate_label = "5%"
+
+            send_cw(room_id, acc_id, msg_id,
+                f"[pname:{target_id}]さんに {amt}pt 送金しました\n"
+                f"─────────────\n"
+                f"送金額　: {amt}pt\n"
+                f"税率　　: {rate_label}\n"
+                f"税金　　: {tax}pt\n"
+                f"合計支出: {total_cost}pt\n"
+                f"残高　　: {current_pts - total_cost}pt"
+            )
         return Response(status=200)
     
     
