@@ -360,21 +360,23 @@ def webhook():
             send_cw(room_id, acc_id, msg_id, f"エラー: {e}")
         return Response(status=200)
 
-    # /give (累進税あり)
+    # /give (返信・直接指定両対応)
     elif body.startswith("/give "):
         parts = body.split()
         if len(parts) >= 2:
             # --- 送信先IDの特定 ---
+            # 1. 直接IDが指定されている場合 (例: /give 12345 500)
             if parts[1].isdigit():
                 target_id = parts[1]
                 amt_idx = 2
             else:
+                # 2. 返信(引用)からaidを抽出 (相手が誰でもOK)
                 rp_match = re.search(r"aid=(\d+)", body)
                 if rp_match:
                     target_id = rp_match.group(1)
-                    amt_idx = 1  # IDが抜けるので、次の要素が金額
+                    amt_idx = 1 
                 else:
-                    send_cw(room_id, acc_id, msg_id, "エラー: IDを指定するか、相手に返信してください。")
+                    send_cw(room_id, acc_id, msg_id, "エラー: IDを指定するか、相手の投稿に返信してください。")
                     return Response(status=200)
 
             # --- 金額の特定 ---
@@ -406,7 +408,7 @@ def webhook():
                 send_cw(room_id, acc_id, msg_id, "金額は数値か all で指定してください。")
                 return Response(status=200)
 
-            # --- 送金処理と税金計算 ---
+            # --- 送金処理 ---
             tax = calc_tax(amt)
             total_cost = amt + tax
 
@@ -415,29 +417,18 @@ def webhook():
             elif target_id == acc_id:
                 send_cw(room_id, acc_id, msg_id, "自分には送金できません。")
             elif current_pts < total_cost:
-                send_cw(room_id, acc_id, msg_id,
-                    f"ポイント不足(合計:{total_cost}pt必要 / 所持:{current_pts}pt)"
-                )
+                send_cw(room_id, acc_id, msg_id, f"ポイント不足(合計:{total_cost}pt必要)")
             else:
                 target_user = get_user(target_id)
                 update_user(acc_id, {"points": current_pts - total_cost})
                 update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
 
-                # 税率ラベル
-                if amt >= 10000: rate_label = "35%"
-                elif amt >= 5000: rate_label = "20%"
-                elif amt >= 1000: rate_label = "10%"
-                else: rate_label = "5%"
-
-                send_cw(room_id, acc_id, msg_id,
-                    f"[pname:{target_id}]さんに {amt}pt 送金しました\n"
-                    f"─────────────\n"
-                    f"税率: {rate_label} / 税金: {tax}pt\n"
-                    f"合計支出: {total_cost}pt\n"
-                    f"現在の残高: {current_pts - total_cost}pt"
+                send_cw(room_id, acc_id, msg_id, 
+                    f"[pname:{target_id}]さんに {amt}pt 送金しました！\n"
+                    f"(税金: {tax}pt / 合計支出: {total_cost}pt)"
                 )
         return Response(status=200)
-
+        
     
     # /help
     elif body == "/help":
