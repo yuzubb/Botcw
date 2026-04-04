@@ -17,14 +17,21 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 _CACHED_BOT_ID = None
 
 
-# ─── chat_count に応じた /work 上限 ───────────────────────────
+# ─── 週間chat_count に応じた /work 上限 ──────────────────────
+# chat_count は毎週月曜0:00にリセットされる週間投稿数
+WORK_LIMIT_TIERS = [
+    (750, None),   # 750投稿以上 → 無制限
+    (500, 20),
+    (300, 16),
+    (150, 12),
+    (50,  8),
+    (0,   5),      # 0〜49投稿 → 5回/日
+]
+
 def get_work_limit(chat_count):
-    if chat_count >= 1000:
-        return None          # 無制限
-    elif chat_count >= 300:
-        return 15
-    else:
-        return 10
+    for threshold, limit in WORK_LIMIT_TIERS:
+        if chat_count >= threshold:
+            return limit  # Noneは無制限
 
 
 # ─── 日付が変わった瞬間に自動 daily_reset ────────────────────
@@ -54,6 +61,59 @@ def schedule_daily_reset():
 
 
 threading.Thread(target=schedule_daily_reset, daemon=True).start()
+
+
+# ─── 宝くじ 週次抽選（毎週月曜0:00） ─────────────────────────
+LOTTERY_TICKET_PRICE = 100
+LOTTERY_WIN_RATE = 0.3      # 当選確率30%（外れでも積立は返ってこない）
+
+def run_lottery_draw():
+    try:
+        # 宝くじ抽選
+        tickets = supabase.table("lottery_tickets").select("*").execute().data
+        if not tickets:
+            print("[lottery] 購入者なし、スキップ")
+        else:
+            jackpot = len(tickets) * LOTTERY_TICKET_PRICE
+            winners = [t for t in tickets if random.random() < LOTTERY_WIN_RATE]
+
+            if winners:
+                prize = jackpot // len(winners)
+                for w in winners:
+                    u = supabase.table("profiles").select("points").eq("id", w["account_id"]).execute().data
+                    if u:
+                        supabase.table("profiles").update({
+                            "points": (u[0].get("points") or 0) + prize
+                        }).eq("id", w["account_id"]).execute()
+                result_msg = f"🎰 宝くじ抽選結果！\n購入者: {len(tickets)}人 / 賞金総額: {jackpot}pt\n当選者: {len(winners)}人 / 1人あたり: {prize}pt"
+            else:
+                result_msg = f"🎰 宝くじ抽選結果！\n購入者: {len(tickets)}人 / 賞金総額: {jackpot}pt\n今週の当選者はいませんでした…賞金は没収されます。"
+
+            supabase.table("lottery_tickets").delete().neq("account_id", "").execute()
+            print(f"[lottery] {result_msg}")
+
+        # 週間chat_countリセット
+        supabase.table("profiles").update({"chat_count": 0}).neq("id", "0").execute()
+        print(f"[weekly_reset] chat_count リセット完了: {datetime.now()}")
+
+    except Exception as e:
+        print(f"[lottery/weekly_reset] エラー: {e}")
+
+
+def schedule_lottery():
+    while True:
+        now = datetime.now()
+        # 次の月曜0:00まで待機
+        days_until_monday = (7 - now.weekday()) % 7 or 7
+        next_monday = (now + timedelta(days=days_until_monday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        wait_sec = (next_monday - now).total_seconds()
+        threading.Event().wait(wait_sec)
+        run_lottery_draw()
+
+
+threading.Thread(target=schedule_lottery, daemon=True).start()
 
 
 def get_bot_id():
@@ -230,8 +290,52 @@ def webhook():
             send_cw(room_id, acc_id, msg_id, f"結果：{res['n']} ({res['p']}pt獲得)")
         return Response(status=200)
 
-    
-    elif "/del" in body:
+    # /lottery
+    elif body == "/lottery" or body == "/lottery info":
+        tickets = supabase.table("lottery_tickets").select("*").execute().data
+        jackpot = len(tickets) * LOTTERY_TICKET_PRICE
+        already = any(str(t["account_id"]) == acc_id for t in tickets)
+
+        if body == "/lottery info" or body == "/lottery":
+            # infoも購入コマンドも同じ画面を出してから購入判定
+            info_msg = (
+                f"[info][title]🎰 宝くじ[/title]"
+                f"購入価格　: {LOTTERY_TICKET_PRICE}pt\n"
+                f"当選確率　: {int(LOTTERY_WIN_RATE*100)}%\n"
+                f"現在の購入者: {len(tickets)}人\n"
+                f"賞金総額　: {jackpot}pt\n"
+                f"抽選日　　: 毎週月曜0:00\n"
+                f"─────────────\n"
+                f"あなたの状態: {'購入済み ✅' if already else '未購入'}\n"
+                f"購入: /lottery buy[/info]"
+            )
+            send_cw(room_id, acc_id, msg_id, info_msg)
+        return Response(status=200)
+
+    elif body == "/lottery buy":
+        tickets = supabase.table("lottery_tickets").select("*").execute().data
+        already = any(str(t["account_id"]) == acc_id for t in tickets)
+        current_pts = user.get("points") or 0
+
+        if already:
+            send_cw(room_id, acc_id, msg_id, "今週はすでに購入済みです。")
+        elif current_pts < LOTTERY_TICKET_PRICE:
+            send_cw(room_id, acc_id, msg_id,
+                f"ポイントが足りません。\n必要: {LOTTERY_TICKET_PRICE}pt / 所持: {current_pts}pt"
+            )
+        else:
+            supabase.table("lottery_tickets").insert({"account_id": acc_id}).execute()
+            update_user(acc_id, {"points": current_pts - LOTTERY_TICKET_PRICE})
+            jackpot_new = (len(tickets) + 1) * LOTTERY_TICKET_PRICE
+            send_cw(room_id, acc_id, msg_id,
+                f"🎟️ 宝くじを購入しました！\n"
+                f"─────────────\n"
+                f"購入価格　: {LOTTERY_TICKET_PRICE}pt\n"
+                f"残高　　　: {current_pts - LOTTERY_TICKET_PRICE}pt\n"
+                f"現在の賞金総額: {jackpot_new}pt\n"
+                f"抽選: 毎週月曜0:00 / 当選確率: {int(LOTTERY_WIN_RATE*100)}%"
+            )
+        return Response(status=200)
         referenced_msgs = re.findall(r"to=\d+-(\d+)", body)
         
         bot_id = get_bot_id()
@@ -267,15 +371,25 @@ def webhook():
                 f"販売人: {target.get('is_seller')}"
             )
         else:
-            work_limit = get_work_limit(user.get("chat_count") or 0)
+            chat_count = user.get("chat_count") or 0
+            work_limit = get_work_limit(chat_count)
             limit_str = "無制限" if work_limit is None else f"{work_limit}回/日"
+
+            # 次の段階まで何投稿必要か
+            next_info = ""
+            for threshold, limit in reversed(WORK_LIMIT_TIERS):
+                if chat_count < threshold:
+                    next_limit = "無制限" if limit is None else f"{limit}回/日"
+                    next_info = f"\n📈 次の段階まで: あと{threshold - chat_count}投稿 → {next_limit}"
+                    break
+
             send_cw(room_id, acc_id, msg_id,
                 f"あなたのステータス\n"
                 f"所持: {user.get('points')}pt\n"
                 f"職業: {user.get('job')}\n"
                 f"販売人: {user.get('is_seller')}\n"
-                f"💬 チャット投稿数: {user.get('chat_count') or 0}\n"
-                f"⚒️ /work上限: {limit_str}"
+                f"💬 今週の投稿数: {chat_count}{next_info}\n"
+                f"⚒️ /work上限: {limit_str}（毎週月曜リセット）"
             )
         return Response(status=200)
 
@@ -385,8 +499,8 @@ def webhook():
                 if work_limit is not None and count >= work_limit:
                     send_cw(room_id, acc_id, msg_id,
                         f"本日は{work_limit}回働きました。また明日！\n"
-                        f"チャット投稿数: {user.get('chat_count') or 0}pt\n"
-                        f"（1000投稿で無制限、300投稿で15回/日）"
+                        f"💬 チャット投稿数: {user.get('chat_count') or 0}pt\n"
+                        f"（200投稿で無制限、50投稿で15回/日）"
                     )
                 else:
                     reward = random.randint(job_data[0]["min_pt"], job_data[0]["max_pt"])
@@ -552,7 +666,12 @@ def webhook():
             "/hack [相手ID]\n"
             "　ハッカー専用。40%の確率で相手から50〜1000pt奪取。1日1回。\n"
             "/steal\n"
-            "　泥棒専用。ランダムなユーザーから500〜1000pt奪取。1日1回。"
+            "　泥棒専用。ランダムなユーザーから500〜1000pt奪取。1日1回。\n\n"
+            "【宝くじ】\n"
+            "/lottery\n"
+            "　宝くじの情報確認（賞金総額・購入者数・抽選日）。\n"
+            "/lottery buy\n"
+            "　宝くじを購入(100pt)。1人1口。毎週月曜0:00に抽選。当選確率30%。"
             "[/info]"
         )
         send_cw(room_id, acc_id, msg_id, msg)
