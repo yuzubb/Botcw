@@ -1,4 +1,4 @@
-import os
+　import os
 import re
 import random
 import requests
@@ -372,9 +372,12 @@ def webhook():
         # 通常型: /give [相手ID] [金額 or all]
         reply_target_id = get_reply_target_id(body)
 
-        # コマンド部分のみ抽出（[rp ...][pname:...]などのCWタグを除去）
-        clean_body = re.sub(r"\[rp[^\]]*\]|\[pname:[^\]]*\]", "", body).strip()
-        parts = clean_body.split()
+        # /give コマンド行だけを抽出（返信時に付くヘッダー行を無視）
+        give_line = next(
+            (l.strip() for l in body.splitlines() if l.strip().startswith("/give")),
+            ""
+        )
+        parts = give_line.split()
 
         # 返信型かどうか判定: /give の引数が1つ（金額のみ）かつリプライあり
         if reply_target_id and len(parts) == 2:
