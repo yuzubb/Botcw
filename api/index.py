@@ -2,7 +2,8 @@ import os
 import re
 import random
 import requests
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from flask import Flask, request, Response
 from supabase import create_client, Client
 
@@ -14,6 +15,45 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 _CACHED_BOT_ID = None
+
+
+# ─── chat_count に応じた /work 上限 ───────────────────────────
+def get_work_limit(chat_count):
+    if chat_count >= 200:
+        return None          # 無制限
+    elif chat_count >= 50:
+        return 15
+    else:
+        return 10
+
+
+# ─── 日付が変わった瞬間に自動 daily_reset ────────────────────
+def run_daily_reset():
+    try:
+        supabase.table("profiles").update({
+            "work_count": 0,
+            "last_work_day": None,
+            "last_omikuji_at": None,
+            "last_hack_at": None,
+            "last_steal_at": None,
+        }).neq("id", "0").execute()
+        print(f"[daily_reset] 完了: {datetime.now()}")
+    except Exception as e:
+        print(f"[daily_reset] エラー: {e}")
+
+
+def schedule_daily_reset():
+    while True:
+        now = datetime.now()
+        next_midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        wait_sec = (next_midnight - now).total_seconds()
+        threading.Event().wait(wait_sec)
+        run_daily_reset()
+
+
+threading.Thread(target=schedule_daily_reset, daemon=True).start()
 
 
 def get_bot_id():
@@ -41,6 +81,7 @@ def get_user(acc_id):
             "work_count": 0,
             "last_work_at": None,
             "last_work_day": None,
+            "chat_count": 0,
         }
         supabase.table("profiles").insert(new_user).execute()
         return new_user
@@ -226,11 +267,15 @@ def webhook():
                 f"販売人: {target.get('is_seller')}"
             )
         else:
+            work_limit = get_work_limit(user.get("chat_count") or 0)
+            limit_str = "無制限" if work_limit is None else f"{work_limit}回/日"
             send_cw(room_id, acc_id, msg_id,
                 f"あなたのステータス\n"
                 f"所持: {user.get('points')}pt\n"
                 f"職業: {user.get('job')}\n"
-                f"販売人: {user.get('is_seller')}"
+                f"販売人: {user.get('is_seller')}\n"
+                f"💬 チャット投稿数: {user.get('chat_count') or 0}\n"
+                f"⚒️ /work上限: {limit_str}"
             )
         return Response(status=200)
 
@@ -336,8 +381,13 @@ def webhook():
                     pass
             if can_work:
                 count = user.get("work_count", 0) if user.get("last_work_day") == today else 0
-                if count >= 10:
-                    send_cw(room_id, acc_id, msg_id, "本日は10回働きました。また明日！")
+                work_limit = get_work_limit(user.get("chat_count") or 0)
+                if work_limit is not None and count >= work_limit:
+                    send_cw(room_id, acc_id, msg_id,
+                        f"本日は{work_limit}回働きました。また明日！\n"
+                        f"💬 チャット投稿数: {user.get('chat_count') or 0}pt\n"
+                        f"（200投稿で無制限、50投稿で15回/日）"
+                    )
                 else:
                     reward = random.randint(job_data[0]["min_pt"], job_data[0]["max_pt"])
                     if random.random() < 0.05:
@@ -704,8 +754,11 @@ def webhook():
                     send_cw(room_id, acc_id, msg_id, "獲物がいません。")
         return Response(status=200)
 
-    # メッセージ送信で+1pt
-    update_user(acc_id, {"points": (user.get("points") or 0) + 1})
+    # コマンド以外のメッセージ: +1pt & chat_count+1
+    update_user(acc_id, {
+        "points": (user.get("points") or 0) + 1,
+        "chat_count": (user.get("chat_count") or 0) + 1,
+    })
     return Response(status=200)
 
 
