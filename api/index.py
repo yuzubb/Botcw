@@ -19,9 +19,9 @@ _CACHED_BOT_ID = None
 
 # ─── chat_count に応じた /work 上限 ───────────────────────────
 def get_work_limit(chat_count):
-    if chat_count >= 200:
+    if chat_count >= 1000:
         return None          # 無制限
-    elif chat_count >= 50:
+    elif chat_count >= 300:
         return 15
     else:
         return 10
