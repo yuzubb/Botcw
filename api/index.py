@@ -1,4 +1,5 @@
 import os
+import re
 import random
 import requests
 from datetime import datetime
@@ -183,7 +184,7 @@ def webhook():
         return Response(status=200)
 
     
-    elif "/del" in body
+    elif "/del" in body:
         referenced_msgs = re.findall(r"to=\d+-(\d+)", body)
         
         bot_id = get_bot_id()
