@@ -362,15 +362,32 @@ def webhook():
 
     # /give (累進税あり)
     elif body.startswith("/give "):
-        parts = body.split(" ")
-        if len(parts) >= 3:
-            target_id, amt_str = parts[1], parts[2]
+        parts = body.split()
+        if len(parts) >= 2:
+            # --- 送信先IDの特定 ---
+            if parts[1].isdigit():
+                target_id = parts[1]
+                amt_idx = 2
+            else:
+                rp_match = re.search(r"aid=(\d+)", body)
+                if rp_match:
+                    target_id = rp_match.group(1)
+                    amt_idx = 1  # IDが抜けるので、次の要素が金額
+                else:
+                    send_cw(room_id, acc_id, msg_id, "エラー: IDを指定するか、相手に返信してください。")
+                    return Response(status=200)
+
+            # --- 金額の特定 ---
+            if len(parts) > amt_idx:
+                amt_str = parts[amt_idx]
+            else:
+                send_cw(room_id, acc_id, msg_id, "使用法: /give [金額] (返信時) または /give [ID] [金額]")
+                return Response(status=200)
+
             current_pts = user.get("points") or 0
 
-            # allの場合は全所持ポイントを送金
+            # --- 全額送金(all)の計算 ---
             if amt_str == "all":
-                # 税込で払える最大額を逆算: total_cost = amt + tax(amt) <= current_pts
-                # 近似で二分探索
                 lo, hi = 1, current_pts
                 amt = 0
                 while lo <= hi:
@@ -386,49 +403,42 @@ def webhook():
             elif amt_str.isdigit():
                 amt = int(amt_str)
             else:
-                send_cw(room_id, acc_id, msg_id, "送金額は数値か all で指定してください。")
+                send_cw(room_id, acc_id, msg_id, "金額は数値か all で指定してください。")
                 return Response(status=200)
 
+            # --- 送金処理と税金計算 ---
             tax = calc_tax(amt)
             total_cost = amt + tax
 
             if amt <= 0:
-                send_cw(room_id, acc_id, msg_id, "送金額は1pt以上で指定してください。")
+                send_cw(room_id, acc_id, msg_id, "1pt以上指定してください。")
             elif target_id == acc_id:
-                send_cw(room_id, acc_id, msg_id, "自分自身には送金できません。")
+                send_cw(room_id, acc_id, msg_id, "自分には送金できません。")
             elif current_pts < total_cost:
                 send_cw(room_id, acc_id, msg_id,
-                    f"ポイントが足りません。\n"
-                    f"送金額: {amt}pt ＋ 税金: {tax}pt = 合計: {total_cost}pt 必要\n"
-                    f"現在の所持: {current_pts}pt"
+                    f"ポイント不足(合計:{total_cost}pt必要 / 所持:{current_pts}pt)"
                 )
             else:
                 target_user = get_user(target_id)
                 update_user(acc_id, {"points": current_pts - total_cost})
                 update_user(target_id, {"points": (target_user.get("points") or 0) + amt})
 
-                if amt >= 10000:
-                    rate_label = "35%"
-                elif amt >= 5000:
-                    rate_label = "20%"
-                elif amt >= 1000:
-                    rate_label = "10%"
-                else:
-                    rate_label = "5%"
+                # 税率ラベル
+                if amt >= 10000: rate_label = "35%"
+                elif amt >= 5000: rate_label = "20%"
+                elif amt >= 1000: rate_label = "10%"
+                else: rate_label = "5%"
 
                 send_cw(room_id, acc_id, msg_id,
                     f"[pname:{target_id}]さんに {amt}pt 送金しました\n"
                     f"─────────────\n"
-                    f"送金額　: {amt}pt\n"
-                    f"税率　　: {rate_label}\n"
-                    f"税金　　: {tax}pt\n"
+                    f"税率: {rate_label} / 税金: {tax}pt\n"
                     f"合計支出: {total_cost}pt\n"
-                    f"残高　　: {current_pts - total_cost}pt"
+                    f"現在の残高: {current_pts - total_cost}pt"
                 )
-        else:
-            send_cw(room_id, acc_id, msg_id, "使用法: /give [相手ID] [送金額 or all]")
         return Response(status=200)
 
+    
     # /help
     elif body == "/help":
         msg = (
