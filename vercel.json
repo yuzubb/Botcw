@@ -8,8 +8,5 @@
       "path": "/cron/weekly-reset",
       "schedule": "0 0 ? * MON"
     }
-  ],
-  "rewrites": [
-    { "source": "/cron/(.*)", "destination": "/index.py" }
   ]
 }
