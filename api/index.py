@@ -357,7 +357,29 @@ def webhook():
         
         return Response(status=200)
 
+    elif "/del" in body:
+        referenced_msgs = re.findall(r"to=\d+-(\d+)", body)
+        
+        bot_id = get_bot_id()
+        deleted_count = 0
 
+        for target_msg_id in referenced_msgs:
+            headers = {"X-ChatWorkToken": CW_TOKEN}
+            try:
+                msg_detail = requests.get(
+                    f"https://api.chatwork.com/v2/rooms/{room_id}/messages/{target_msg_id}",
+                    headers=headers
+                ).json()
+                
+                if str(msg_detail.get("account", {}).get("account_id")) == bot_id:
+                    if delete_cw(room_id, target_msg_id):
+                        deleted_count += 1
+            except:
+                continue
+        
+        return Response(status=200)
+
+    
     # /status
     elif body.startswith("/status"):
         parts = body.split(" ")
