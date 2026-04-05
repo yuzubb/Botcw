@@ -2,11 +2,11 @@
   "crons": [
     {
       "path": "/cron/daily-reset",
-      "schedule": "0 0 * * *"
+      "schedule": "0 0 * * ? *"
     },
     {
       "path": "/cron/weekly-reset",
-      "schedule": "0 0 ? * MON"
+      "schedule": "0 0 ? * 1 *"
     }
   ]
 }
