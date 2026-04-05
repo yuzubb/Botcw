@@ -2,6 +2,7 @@ import os
 import re
 import random
 import requests
+import threading
 from datetime import datetime, timedelta
 from flask import Flask, request, Response
 from supabase import create_client, Client
@@ -43,27 +44,28 @@ def run_daily_reset():
             "last_hack_at": None,
             "last_steal_at": None,
         }).neq("id", "0").execute()
-        print(f"✅ [daily_reset] 完了: {datetime.now().isoformat()}")
-        return True
+        print(f"[daily_reset] 完了: {datetime.now()}")
     except Exception as e:
-        print(f"❌ [daily_reset] エラー: {e}")
-        return False
+        print(f"[daily_reset] エラー: {e}")
+
+
+def schedule_daily_reset():
+    while True:
+        now = datetime.now()
+        next_midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        wait_sec = (next_midnight - now).total_seconds()
+        threading.Event().wait(wait_sec)
+        run_daily_reset()
+
+
+threading.Thread(target=schedule_daily_reset, daemon=True).start()
 
 
 # ─── 宝くじ 週次抽選（毎週月曜0:00） ─────────────────────────
 LOTTERY_TICKET_PRICE = 100
 LOTTERY_WIN_RATE = 0.3      # 当選確率30%（外れでも積立は返ってこない）
-
-def run_weekly_reset():
-    """週間リセット（毎週月曜0:00）"""
-    try:
-        # 週間chat_countリセット
-        supabase.table("profiles").update({"chat_count": 0}).neq("id", "0").execute()
-        print(f"✅ [weekly_reset] chat_count リセット完了: {datetime.now().isoformat()}")
-        return True
-    except Exception as e:
-        print(f"❌ [weekly_reset] エラー: {e}")
-        return False
 
 def run_lottery_draw():
     try:
@@ -90,13 +92,28 @@ def run_lottery_draw():
             supabase.table("lottery_tickets").delete().neq("account_id", "").execute()
             print(f"[lottery] {result_msg}")
 
-        # 週間リセット実行
-        run_weekly_reset()
-        return True
+        # 週間chat_countリセット
+        supabase.table("profiles").update({"chat_count": 0}).neq("id", "0").execute()
+        print(f"[weekly_reset] chat_count リセット完了: {datetime.now()}")
 
     except Exception as e:
-        print(f"❌ [lottery/weekly_reset] エラー: {e}")
-        return False
+        print(f"[lottery/weekly_reset] エラー: {e}")
+
+
+def schedule_lottery():
+    while True:
+        now = datetime.now()
+        # 次の月曜0:00まで待機
+        days_until_monday = (7 - now.weekday()) % 7 or 7
+        next_monday = (now + timedelta(days=days_until_monday)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        wait_sec = (next_monday - now).total_seconds()
+        threading.Event().wait(wait_sec)
+        run_lottery_draw()
+
+
+threading.Thread(target=schedule_lottery, daemon=True).start()
 
 
 def get_bot_id():
@@ -675,29 +692,10 @@ def webhook():
             "/lottery\n"
             "　宝くじの情報確認（賞金総額・購入者数・抽選日）。\n"
             "/lottery buy\n"
-            "　宝くじを購入(100pt)。1人1口。毎週月曜0:00に抽選。当選確率30%。\n\n"
-            "【管理者専用】\n"
-            "/reset weekly\n"
-            "　月曜リセット(chat_count)を手動実行。ルーム管理者のみ。"
+            "　宝くじを購入(100pt)。1人1口。毎週月曜0:00に抽選。当選確率30%。"
             "[/info]"
         )
         send_cw(room_id, acc_id, msg_id, msg)
-        return Response(status=200)
-
-    # /reset weekly (手動月曜リセット・管理者専用)
-    elif body == "/reset weekly":
-        if not is_room_admin(room_id, acc_id):
-            send_cw(room_id, acc_id, msg_id, "このコマンドはルーム管理者のみ実行できます。")
-            return Response(status=200)
-        
-        try:
-            run_weekly_reset()
-            send_cw(room_id, acc_id, msg_id,
-                "✅ 週間リセット実行完了！\n"
-                "chat_count をリセットしました。"
-            )
-        except Exception as e:
-            send_cw(room_id, acc_id, msg_id, f"❌ エラーが発生しました: {str(e)}")
         return Response(status=200)
 
     # /ranking
@@ -902,46 +900,6 @@ def webhook():
         "chat_count": (user.get("chat_count") or 0) + 1,
     })
     return Response(status=200)
-
-
-# ═════════════════════════════════════════════════════════════════
-# 外部Cron用エンドポイント（Vercel環境用）
-# ═════════════════════════════════════════════════════════════════
-
-@app.route("/cron/daily-reset", methods=["POST", "GET"])
-def cron_daily_reset():
-    """毎日0:00に外部Cronから呼び出し"""
-    # セキュリティ: 環境変数のトークンをチェック
-    cron_token = request.headers.get("Authorization")
-    expected_token = os.environ.get("CRON_SECRET")
-    
-    if expected_token and cron_token != f"Bearer {expected_token}":
-        return Response(json={"error": "Unauthorized"}, status=401)
-    
-    success = run_daily_reset()
-    status = 200 if success else 500
-    return Response(json={
-        "status": "success" if success else "failed",
-        "timestamp": datetime.now().isoformat()
-    }, status=status)
-
-
-@app.route("/cron/weekly-reset", methods=["POST", "GET"])
-def cron_weekly_reset():
-    """毎週月曜0:00に外部Cronから呼び出し"""
-    # セキュリティ: 環境変数のトークンをチェック
-    cron_token = request.headers.get("Authorization")
-    expected_token = os.environ.get("CRON_SECRET")
-    
-    if expected_token and cron_token != f"Bearer {expected_token}":
-        return Response(json={"error": "Unauthorized"}, status=401)
-    
-    success = run_lottery_draw()
-    status = 200 if success else 500
-    return Response(json={
-        "status": "success" if success else "failed",
-        "timestamp": datetime.now().isoformat()
-    }, status=status)
 
 
 if __name__ == "__main__":
