@@ -521,8 +521,7 @@ def webhook():
                 if work_limit is not None and count >= work_limit:
                     send_cw(room_id, acc_id, msg_id,
                         f"本日は{work_limit}回働きました。また明日！\n"
-                        f"💬 チャット投稿数: {user.get('chat_count') or 0}pt\n"
-                        f"（200投稿で無制限、50投稿で15回/日）"
+                        f"💬 チャット投稿数: {user.get('chat_count') or 0}pt"
                     )
                 else:
                     reward = random.randint(job_data[0]["min_pt"], job_data[0]["max_pt"])
