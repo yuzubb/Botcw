@@ -551,6 +551,23 @@ def webhook():
             send_cw(room_id, acc_id, msg_id, f"エラー: {e}")
         return Response(status=200)
 
+
+    # /work_reset (管理者のみ: 全員の仕事回数と制限日をリセット)
+    elif is_admin and body == "/work_reset":
+        try:
+            supabase.table("profiles").update({
+                "work_count": 0,
+                "last_work_day": None,
+                "last_work_at": None, # 休憩時間もリセットしたい場合は追加
+            }).neq("id", "0").execute()
+            
+            send_cw(room_id, acc_id, msg_id, "完了")
+        except Exception as e:
+            send_cw(room_id, acc_id, msg_id, f"リセットエラー: {e}")
+        return Response(status=200)
+
+                    
+
     # /give (累進税あり) — 返信型は body が [rp...] で始まるので行単位でチェック
     elif any(l.strip().startswith("/give") for l in body.splitlines()):
         # 返信型: /give [金額 or all] ← リプライ先のIDを自動取得
