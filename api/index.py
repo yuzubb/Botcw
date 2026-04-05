@@ -908,7 +908,7 @@ def webhook():
 # 外部Cron用エンドポイント（Vercel環境用）
 # ═════════════════════════════════════════════════════════════════
 
-@app.route("/api/cron/daily-reset", methods=["POST", "GET"])
+@app.route("/cron/daily-reset", methods=["POST", "GET"])
 def cron_daily_reset():
     """毎日0:00に外部Cronから呼び出し"""
     # セキュリティ: 環境変数のトークンをチェック
@@ -926,7 +926,7 @@ def cron_daily_reset():
     }, status=status)
 
 
-@app.route("/api/cron/weekly-reset", methods=["POST", "GET"])
+@app.route("/cron/weekly-reset", methods=["POST", "GET"])
 def cron_weekly_reset():
     """毎週月曜0:00に外部Cronから呼び出し"""
     # セキュリティ: 環境変数のトークンをチェック
