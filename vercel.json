@@ -1,12 +1,15 @@
 {
   "crons": [
     {
-      "path": "/api/cron/daily-reset",
+      "path": "/cron/daily-reset",
       "schedule": "0 0 * * *"
     },
     {
-      "path": "/api/cron/weekly-reset",
+      "path": "/cron/weekly-reset",
       "schedule": "0 0 ? * MON"
     }
+  ],
+  "rewrites": [
+    { "source": "/cron/(.*)", "destination": "/index.py" }
   ]
 }
