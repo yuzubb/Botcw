@@ -17,7 +17,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 _CACHED_BOT_ID = None
 
 
-# ─── 週間chat_count に応じた /work 上限 ──────────────────────
+# ─── 週間chat_count に応じた /work 上限数 ──────────────────────
 # chat_count は毎週月曜0:00にリセットされる週間投稿数
 WORK_LIMIT_TIERS = [
     (750, None),   # 750投稿以上 → 無制限
